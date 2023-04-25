@@ -234,7 +234,7 @@ class SlamNet(nn.Module):
         self.is_pretrain_obs = is_pretrain_obs
 
         assert(len(inputShape) == 4)
-        self.mapping = MappingModel(N_ch=16, use_cuda=use_cuda)
+        #self.mapping = MappingModel(N_ch=16, use_cuda=use_cuda)
         self.visualTorso = TransitionModel(inputShape[1:], use_cuda=use_cuda)
         if inputShape[1] == 3:
             numFeatures = 2592
