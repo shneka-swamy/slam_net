@@ -2,7 +2,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 import numpy as np
-import cv2
 from torch.distributions import MultivariateNormal
 from torch.distributions import Categorical, Normal, Independent, MixtureSameFamily
 
@@ -95,8 +94,8 @@ class MappingModel(nn.Module):
 
     def __init__(self, N_ch, use_cuda):
         super(MappingModel, self).__init__()
-        #channels, height, width = self.perspective_shape()
-        channels, height, width = 1, 80, 80
+        channels, height, width = self.perspective_shape()
+        assert channels == 1 and height == width and height == 80, "Perspective shape is not correct"
         self.convs = nn.ModuleList([
             CoordConv(channels, 8, kernel_size=5, stride=1, dilation=4, padding=8, use_cuda=use_cuda),
             CoordConv(channels, 8, kernel_size=5, stride=1, dilation=2, padding=4, use_cuda=use_cuda),
@@ -120,57 +119,53 @@ class MappingModel(nn.Module):
             CoordConv(64, N_ch, kernel_size=3, stride=1, padding=1, use_cuda=use_cuda)
         )
 
+    # Perspective shape is (1, 80, 80)
+    @staticmethod
+    def try_perspective_transform(self, observation):
+        # Perspective transform is done using torch to aid in backpropagation
+        # The perspective transform is done on the CPU
+
+        # convert rgb to grayscale
+        observation = observation[:, 0, :, :] * 0.2989 + observation[:, 1, :, :] * 0.5870 + observation[:, 2, :, :] * 0.1140
+        observation = observation.unsqueeze(1)
+    
+        fx, fy = 7.188560000000e+02, 7.188560000000e+02
+        cx, cy = 6.071928000000e+02, 1.852157000000e+02
+
+        # The intrinsic matrix
+        K = torch.tensor([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=torch.float32)
+
+        # The extrinsic matrix
+        # The rotation matrix
+        R = torch.tensor([[9.999239000000e-01, 9.837760000000e-03, -7.445048000000e-03], [-9.869795000000e-03, 9.999421000000e-01, -4.278459000000e-03], [7.402527000000e-03, 4.351614000000e-03, 9.999631000000e-01]], dtype=torch.float32)
+        # The translation matrix
+        T = torch.tensor([-2.573699000000e-02, -1.199354000000e-01, 1.194591000000e-01], dtype=torch.float32)
+
+        # The extrinsic matrix
+        RT = torch.cat((R, T.view(3, 1)), dim=1)
+
+        # The full projection matrix
+        P = torch.matmul(K, RT)
+
+        # The inverse of the projection matrix
+        Pinv = torch.inverse(P)
+
+        # Perspective transform
+        perspective_transform = torch.nn.functional.affine_grid(Pinv.unsqueeze(0), observation.unsqueeze(0).size())
+
+        # Change to the required shape
+        perspective_transform = perspective_transform.permute(0, 3, 1, 2)
+        print(perspective_transform.shape)
+
+        return perspective_transform
+
     def forward(self, observation):
-        x = self.perspective_transform(observation)
+        x = self.try_perspective_transform(observation)
         x = torch.cat([conv(x) for conv in self.convs], dim=1)
         xi = self.body_first(x)
         xi += self.body_second(xi)
         x = self.body_third(xi)
         return x
-
-    # TODO: Check if the wrap-perspective is working properly
-    @staticmethod
-    def perspective_transform(observation):
-        observation_np = observation.to('cpu').numpy()
-        all_images = []
-        print("The shape of the observation is: ", observation_np.shape)
-        for image in observation_np:
-            print("The shape of the observation is: ", image.shape)
-            # Move the 0th dimension to the end
-            #image = np.moveaxis(image, 0, -1)
-            # reshape the (c, h, w) to (w, h, c)
-            image = np.reshape(image, (image.shape[2], image.shape[1], image.shape[0]))
-
-            print("The shape of the observation is: ", image.shape)
-            gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            gray_image = cv2.resize(gray_image, (80, 80))
-            gray_image = gray_image.reshape(80, 80, 1)
-
-            focal_length = 500 # in pixels
-            center = (gray_image.shape[1]/2, gray_image.shape[0]/2)
-            camera_matrix = np.array([[focal_length, 0, center[0]],
-                                        [0, focal_length, center[1]],
-                                        [0, 0, 1]], dtype = "double")
-
-            pitch = np.radians(30)
-            yaw = np.radians(45)
-
-            rotation_vector = np.array([pitch, yaw, 0])
-            rotation_matrix = cv2.Rodrigues(rotation_vector)
-            translation_vector = np.array([0, 0, 10])  # in meters
-            extrinsic_matrix = np.hstack((rotation_matrix[0], translation_vector.reshape(3, 1)))
-
-            # Projection matrix
-            projection_matrix = np.dot(camera_matrix, extrinsic_matrix)
-
-
-            # Perspective transform
-            warped_image = cv2.warpPerspective(gray_image, projection_matrix, (gray_image.shape[1], gray_image.shape[0]))
-            warped_image = warped_image.reshape(80, 80, 1)
-            warped_image = np.moveaxis(warped_image, -1, 0)
-            all_images.append(warped_image.tolist())
-
-        return torch.tensor(all_images).to('cuda')
 
 class ObservationModel(nn.Module):
 
@@ -249,8 +244,6 @@ class SlamNet(nn.Module):
         self.gmmY = GMModel(numFeatures, 3)
         self.gmmYaw = GMModel(numFeatures, 3)
 
-    # TODO: This function needs more information -- needs to get the ground truth
-    # TODO: Please use ground truth parameter for this purpose
     def forward(self, observation, observationPrev):
         if self.is_training or self.is_pretrain_obs:
             map_t = self.mapping(observation)
@@ -261,16 +254,8 @@ class SlamNet(nn.Module):
             y = self.gmmY(featureVisual)
             yaw = self.gmmYaw(featureVisual)
 
-        # Testing till x, y, yaw
-        #return x, y, yaw
-
-
             if self.is_pretrain_trans:
-                    # Using x, y, yaw to calculate the new state
-                    # Testing if only x can work
-                    new_states, new_weights = self.tryNewState(x, y , yaw)
-                    #new_states, new_weights = self.calculateNewStateDummy(x) #, y, yaw)
-                    #print(new_states.shape, new_weights.shape)
+                new_states, new_weights = self.tryNewState(x, y , yaw)
 
         #new_states, new_weights = self.resample(new_states, new_weights)
         #print(new_states.shape, new_weights.shape)

@@ -138,7 +138,7 @@ def train(arg, slamNet, device):
     torch.save(slamNet.state_dict(), arg.save_model)
 
 def test(arg, model, model_file, device):
-    testData = KittiDataset(arg.dataset_path, test=KittiDatasetType.eTest, download=arg.download_dataset, disableExpensiveCheck=True)
+    testData = KittiDataset(arg.dataset_path, type=KittiDatasetType.eTest, download=arg.download_dataset, disableExpensiveCheck=True)
     dataLoader = DataLoader(testData, batch_size=arg.batch_size, shuffle=False, num_workers=arg.num_workers, pin_memory=True)
 
     model.load_state_dict(torch.load(model_file))
