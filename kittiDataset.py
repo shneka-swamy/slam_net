@@ -1,9 +1,12 @@
 import csv
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple, Generator
 
 from PIL import Image
 
+import itertools
+
+import torch
 from torchvision import transforms
 from torchvision.datasets.utils import download_and_extract_archive, check_integrity, calculate_md5
 from torchvision.datasets.vision import VisionDataset
@@ -58,20 +61,22 @@ class KittiDataset(VisionDataset):
         datalist, calib = self._parse_data()
         self.datalist = []
         for data in datalist:
-            self.datalist.append({"leftRgb":data["leftRgb"], "calib":calib})
+            # copy everthing from data to new dict and add calib with key "calib"
+            newData = {**data, "calib": calib}
+            self.datalist.append(newData)
 
-    def __getitem__(self, index: int) -> Tuple[Any, Any]:
-        data = self.datalist[index]
-        leftRgb = Image.open(data["leftRgb"])
-        leftRgb = transforms.ToTensor()(leftRgb)
-        calib = data["calib"]
+    def __getitem__(self, index: int) -> Tuple[Any, Any, Any, Any, Any]:
+        imagePrev = self._rgbd(index)
+        image = self._rgbd(index+1)
+        pose = self._pose(index+1)
 
         if self.transforms:
-            leftRgb = self.transforms(leftRgb)
-        return leftRgb, calib
+            imagePrev = self.transforms(imagePrev)
+            image = self.transforms(image)
+        return imagePrev, image, pose
 
     def __len__(self) -> int:
-        return len(self.datalist)
+        return len(self.datalist)-1
 
     def _parse_data(self) -> Tuple[List[Any], dict]:
         listImages = []
@@ -88,9 +93,30 @@ class KittiDataset(VisionDataset):
                 continue
             folder_prefix = '_'.join(folder_file.split('_')[:-3])
             folder = folder_file.split('.')[0]
-            folder = self._extracted_raw / folder_prefix / folder / "image_02" / "data"
-            for file in folder.iterdir():
-                listImages.append({"leftRgb":file})
+            rgb_folder = self._extracted_raw / folder_prefix / folder / "image_02" / "data"
+            depth_folder = self._extracted_depth / "train" / folder / "proj_depth" / "groundtruth" / "image_02"
+            if not depth_folder.exists():
+                continue
+            timestamps = self._timestamps(self._extracted_raw / folder_prefix / folder / "oxts" / "timestamps.txt")
+            oxts_keys = self._oxts_keys(self._extracted_raw / folder_prefix / folder / "oxts" / "dataformat.txt")
+            oxts_folder = self._extracted_raw / folder_prefix / folder / "oxts" / "data"
+            oxt_files = sorted(oxts_folder.iterdir())
+            prevOxt = self._extract_oxts(oxts_keys, oxt_files[0])
+            prevPose = {'x':0, 'y':0, 'yaw':0}
+            posesList = [prevPose]
+            for i, file in enumerate(itertools.islice(oxt_files, 1, len(oxt_files))):
+                oxt = self._extract_oxts(oxts_keys, file)
+                delta = timestamps[i+1] - timestamps[i]
+                pose = self._oxts_to_pose(prevPose, prevOxt, oxt, delta)
+                posesList.append(pose)
+                prevOxt = oxt
+            for file in depth_folder.iterdir():
+                filename = file.name
+                depthImagePath = depth_folder / filename
+                rgbImagePath = rgb_folder / filename
+                assert int(filename.split('.')[0]) < len(posesList), f"pose index {int(filename.split('.')[0])} < {len(posesList)} out of range"
+                pose = posesList[int(filename.split('.')[0])]
+                listImages.append({"leftRgb":rgbImagePath, "leftDepth":depthImagePath, "pose":pose})
         return listImages, calib
 
     @property
@@ -109,6 +135,72 @@ class KittiDataset(VisionDataset):
     def _extracted_raw(self) -> Path:
         return self._extracted_folder / "raw"
 
+    def _oxts_to_pose(self, prevPose, prevOxt, oxt, delta) -> dict:
+        # convert oxts to pose
+        assert delta > 0
+        currentPose = {"x":0, "y":0, "yaw":0}
+        # dictionary of 'vf', 'vl', 'vu' and 'ax', 'ay', 'az', 'af', 'al', 'au' 'wx', 'wy', 'wz', 'wf', 'wl', 'wu', 'pos_accuracy', 'vel_accuracy', 'navstat', 'numsats', 'posmode', 'velmode', 'orimode'
+        # calculate displacement in x, y and yaw
+        x = (oxt['vf'] - prevOxt['vf']) / delta
+        y = (oxt['vl'] - prevOxt['vl']) / delta
+        yaw = (oxt['vu'] - prevOxt['vu']) / delta
+        return {"x":x, "y":y, "yaw":yaw}
+    
+    def _pose(self, index):
+        return self.datalist[index]["pose"]
+
+    def _rgbd(self, index):
+        return self._rgbdTensor(self.datalist[index]["leftRgb"], self.datalist[index]["leftDepth"])
+
+    def _rgbdTensor(self, rgbFile, depthFile):
+        leftRgb = Image.open(rgbFile)
+        leftRgb = transforms.ToTensor()(leftRgb)
+        leftDepth = Image.open(depthFile)
+        leftDepth = transforms.ToTensor()(leftDepth)
+        # combine rgb and depth
+        return torch.cat((leftRgb, leftDepth), dim=0)
+
+    def _extract_oxts(self, keys, oxtsFile) -> dict:
+        oxts = {}
+        with open(oxtsFile, "r") as f:
+            line = f.readline()
+            values = line.strip().split(" ")
+            for i, key in enumerate(keys):
+                oxts[key] = float(values[i])
+        return oxts
+
+    def _timestamp_generator(self, timestampFile: Path) -> Generator:
+        with open(timestampFile, "r") as f:
+            for line in f:
+                date, time = line.strip().split(" ")
+                yield date, time
+    
+    def _convertTime(self, time) -> float:
+        # convert hh:mm:ss.mmmmmm to seconds
+        h, m, s = time.split(":")
+        return int(h) * 3600 + int(m) * 60 + float(s)
+
+    def _timestamps(self, timestampFile: Path) -> dict:
+        timestamps = {}
+        gen = self._timestamp_generator(timestampFile)
+        _, firstTimeStamp = next(gen)
+        firstTime = self._convertTime(firstTimeStamp)
+        timestamps[0] = 0
+        for i, (date, time) in enumerate(gen):
+            timestamps[i+1] = self._convertTime(time) - firstTime
+            assert timestamps[i+1] - timestamps[i] > 0
+
+        return timestamps
+
+    def _oxts_keys(self, oxtsFile: Path) -> List:
+        oxts_keys = []
+        with open(oxtsFile, "r") as f:
+            for line in f:
+                key = line.strip().split(" ")[0]
+                key = key[:-1] # remove ":" at the end
+                oxts_keys.append(key)
+        return oxts_keys
+    
     def _calib_to_dict(self, calibFile: Path) -> dict:
         calib = {}
         with open(calibFile, "r") as f:
@@ -186,7 +278,6 @@ class KittiDataset(VisionDataset):
 
     def download(self) -> None:
         if self._check_exists():
-           print("Files already downloaded and verified")
            return
         for file, md5 in self.scenarios:
             url = self._generate_url(file)

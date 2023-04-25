@@ -115,7 +115,7 @@ class MappingModel(nn.Module):
         )
 
     def forward(self, observation):
-        x = self.perspective_transform(observation)
+        x = self.perspective_transform_dummy(observation)
         x = torch.cat([conv(x) for conv in self.convs], dim=1)
         xi = self.body_first(x) 
         xi += self.body_second(xi)
@@ -167,12 +167,12 @@ class MappingModel(nn.Module):
         return torch.tensor(all_images).to('cuda')
             
     
-    # @staticmethod
-    # def perspective_transform(x):
-    #     bs, c, h, w = x.shape
-    #     c, h, w = MappingModel.perspective_shape()
-    #     dummy = torch.zeros([bs, c, h, w], dtype=torch.float32, device=x.device)
-    #     return dummy
+    @staticmethod
+    def perspective_transform_dummy(x):
+        bs, c, h, w = x.shape
+        c, h, w = (1, 80, 80)
+        dummy = torch.zeros([bs, c, h, w], dtype=torch.float32, device=x.device)
+        return dummy
 
 class ObservationModel(nn.Module):
 
@@ -235,13 +235,31 @@ class SlamNet(nn.Module):
         if inputShape[0] == 3:
             numFeatures = 2592
         else:
-        #numFeatures = 0 # need to figure out
-        #self.gmmHead = GMModel(numFeatures, 3)
-            self.gemHeads = nn.ModuleList([
-                GMModel(numFeatures, 3),
-                GMModel(numFeatures, 3),
-                GMModel(numFeatures, 3),
-            ])
+            numFeatures = 0
+        self.gemHeads = nn.ModuleList([
+            GMModel(numFeatures, 3),
+            GMModel(numFeatures, 3),
+            GMModel(numFeatures, 3),
+        ])
+
+    def forward(self, observation, observationPrev):
+        map_t = self.mapping(observation)
+        featureVisual = self.visualTorso(observation, observationPrev)
+        print(f"featureVisual shape: {featureVisual.shape}")
+        #gmm = self.gmmHead(featureVisual)
+        #return {'map': map_t, 'gmm': gmm}
+        x = self.gemHeads[0](featureVisual)
+        y = self.gemHeads[1](featureVisual)
+        yaw = self.gemHeads[2](featureVisual)
+    
+        # Using x, y, yaw to calculate the new state
+        new_states, new_weights = self.calculateNewState(x, y, yaw)
+
+        # Calculate the resultant pose estimate
+        pose_estimate = self.calc_average_trajectory(new_states, new_weights)
+        print("The estiamted current pose is: ", pose_estimate)
+
+        return {'x': x, 'y': y, 'yaw': yaw}
 
     def calculateNewState(self, x, y, yaw):
         # x, y, yaw are all given as dictionaries
@@ -287,22 +305,4 @@ class SlamNet(nn.Module):
             pose_estimate[2] += new_states[i][2] * new_weights[i]
         self.trajectory_estimate.append(pose_estimate)
         return pose_estimate
-
-    def forward(self, observation, observationPrev):
-        map_t = self.mapping(observation)
-        featureVisual = self.visualTorso(observation, observationPrev)
-        gmm = self.gmmHead(featureVisual)
-        #return {'map': map_t, 'gmm': gmm}
-        x = self.gemHeads[0](featureVisual)
-        y = self.gemHeads[1](featureVisual)
-        yaw = self.gemHeads[2](featureVisual)
-    
-        # Using x, y, yaw to calculate the new state
-        new_states, new_weights = self.calculateNewState(x, y, yaw)
-
-        # Calculate the resultant pose estimate
-        pose_estimate = self.calc_average_trajectory(new_states, new_weights)
-        print("The estiamted current pose is: ", pose_estimate)
-
-        return {'x': x, 'y': y, 'yaw': yaw}
 

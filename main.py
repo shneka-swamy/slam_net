@@ -15,15 +15,14 @@ def main(arg):
                                              num_workers=1, #arg.num_workers,
                                              pin_memory=True)
 
-    leftRGB1, calib = next(iter(dataLoader))
-    leftRGB2, calib = next(iter(dataLoader))
+    imagePrev1, image1, pose1 = next(iter(dataLoader))
+    imagePrev2, image2, pose2 = next(iter(dataLoader))
 
-    for key in calib.keys():
-        for k in calib[key].keys():
-            print(f"calib [{key}][{k}]: {len(calib[key][k])}")
+    print(f"imagePrev1: {imagePrev1.shape}, image1: {image1.shape}, pose1.x: {pose1['x'].shape}, pose1.y: {pose1['y'].shape}, pose1.yaw: {pose1['yaw'].shape}")
+    print(f"imagePrev2: {imagePrev2.shape}, image2: {image2.shape}, pose2.x: {pose2['x'].shape}, pose2.y: {pose2['y'].shape}, pose2.yaw: {pose2['yaw'].shape}")
 
-    slamNet = SlamNet(leftRGB1.shape[1:], arg.num_particles).cuda()
-    output = slamNet(leftRGB1, leftRGB2)
+    slamNet = SlamNet(imagePrev1.shape[1:], arg.num_particles).cuda()
+    output = slamNet(imagePrev1, image1)
 
 
 if __name__ == "__main__":
