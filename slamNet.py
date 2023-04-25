@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import torch
 import numpy as np
 import cv2
-from scipy.stats import multivariate_normal
+from torch.distributions import MultivariateNormal
 
 
 from coordconv import CoordConv2d as CoordConv
@@ -115,7 +115,7 @@ class MappingModel(nn.Module):
         )
 
     def forward(self, observation):
-        x = self.perspective_transform_dummy(observation)
+        x = self.perspective_transform(observation)
         x = torch.cat([conv(x) for conv in self.convs], dim=1)
         xi = self.body_first(x) 
         xi += self.body_second(xi)
@@ -222,17 +222,18 @@ class SlamNet(nn.Module):
     def __init__(self, inputShape, K):
         super(SlamNet, self).__init__()
         # NOTE: The current implementation assumes that the states are always kept with the weight
-        self.states = []
-        self.states.append([[0, 0, 0] for i in range(K)])
-        self.weights = []
-        self.weights.append([1 for i in range(K)])
+        self.bs = inputShape[0]
+        self.states = torch.zeros([self.bs, K, 3], dtype=torch.float32, device='cuda')
+        self.weights = torch.ones([self.bs, K], dtype=torch.float32, device='cuda')
+        self.lastStates = [0,0,0]
+        self.lastWeights = 1
         self.K = K
         self.trajectory_estimate = [[0, 0, 0]]
 
-        assert(len(inputShape) == 3)
-        self.mapping = MappingModel(N_ch=16)
-        self.visualTorso = TransitionModel(inputShape)
-        if inputShape[0] == 3:
+        assert(len(inputShape) == 4)
+        #self.mapping = MappingModel(N_ch=16)
+        self.visualTorso = TransitionModel(inputShape[1:])
+        if inputShape[1] == 3:
             numFeatures = 2592
         else:
             numFeatures = 2592
@@ -243,7 +244,7 @@ class SlamNet(nn.Module):
         ])
 
     def forward(self, observation, observationPrev):
-        map_t = self.mapping(observation)
+        #map_t = self.mapping(observation)
         featureVisual = self.visualTorso(observation, observationPrev)
         print(f"featureVisual shape: {featureVisual.shape}")
         #gmm = self.gmmHead(featureVisual)
@@ -257,52 +258,63 @@ class SlamNet(nn.Module):
 
         # Calculate the resultant pose estimate
         pose_estimate = self.calc_average_trajectory(new_states, new_weights)
-        print("The estiamted current pose is: ", pose_estimate)
+
+        # Calculate the loss between the estimated pose and the ground truth pose
+        dummy_gt = torch.randn([self.bs, 3], dtype=torch.float32)
+        loss = self.huber_loss(pose_estimate, dummy_gt)
 
         return {'x': x, 'y': y, 'yaw': yaw}
 
+
+    # find the huber loss between the estimated pose and the ground truth pose
+    # The value of delta can be altered
+    def huber_loss (self, pose_estimated, actual_pose, delta = 0.1):
+        residual = torch.abs(pose_estimated - actual_pose)
+        is_small_res = residual < delta
+        return torch.where(is_small_res, 0.5 * residual ** 2, delta * (residual - 0.5 * delta))        
+
     def calculateNewState(self, x, y, yaw):
         # x, y, yaw are all given as dictionaries
+        # x, y, yaw cannot be joined as all of them have different GMM
+        mean = torch.stack([x['mu'], y['mu'], yaw['mu']])
 
-        # Choose the gaussian distribution for x, y, yaw
-        x_prob = x['logvar'].exp()
-        y_prob = y['logvar'].exp()
-        yaw_prob = yaw['logvar'].exp()
+        # Make sigma a diagonal matrix with batch size as the first dimension
+        x['cov_diag'] = torch.diag_embed(x['sigma']**2)  
+        x['covariance'] = torch.bmm(x['cov_diag'], x['cov_diag'].transpose(1, 2))
+        y['cov_diag'] = torch.diag_embed(y['sigma']**2)
+        y['covariance'] = torch.bmm(y['cov_diag'], y['cov_diag'].transpose(1, 2))
+        yaw['cov_diag'] = torch.diag_embed(yaw['sigma']**2)
+        yaw['covariance'] = torch.bmm(yaw['cov_diag'], yaw['cov_diag'].transpose(1, 2))
 
-        # Get the indices based on the probability
-        x_index = torch.multinomial(x_prob, self.K, replacement=True)
-        y_index = torch.multinomial(y_prob, self.K,  replacement=True)
-        yaw_index = torch.multinomial(yaw_prob, self.K, replacement=True)
+        covariance = torch.stack([x['covariance'], y['covariance'], yaw['covariance']])
+        prob_stack = torch.stack([x['logvar'], y['logvar'], yaw['logvar']])
+        prob_stack = torch.exp(prob_stack)
 
-        assert x_index.shape == y_index.shape == yaw_index.shape == torch.Size([self.K]), "The indices are not the same size"
-        # Get the new state
-        new_states = []
-        new_weights = []
-        for i in range(self.K):
-            new_x = self.states[-1][i][0] + np.random.multivariate_normal(x['mu'][x_index[i]], x['sigma'][x_index[i]])
-            new_y = self.states[-1][i][1] + np.random.multivariate_normal(y['mu'][y_index[i]], y['sigma'][y_index[i]])
-            new_yaw = self.states[-1][i][2] + np.random.multivariate_normal(yaw['mu'][yaw_index[i]], yaw['sigma'][yaw_index[i]])
-            new_states.append([new_x, new_y, new_yaw])
-        
-            # Calculate the new weights
-            new_weight_x = self.weights[-1][i] * multivariate_normal.pdf(new_x, x['mu'][x_index[i]], x['sigma'][x_index[i]])
-            new_weight_y = self.weights[-1][i] * multivariate_normal.pdf(new_y, y['mu'][y_index[i]], y['sigma'][y_index[i]])
-            new_weight_yaw = self.weights[-1][i] * multivariate_normal.pdf(new_yaw, yaw['mu'][yaw_index[i]], yaw['sigma'][yaw_index[i]])
-            new_weights.append(new_weight_x * new_weight_y * new_weight_yaw)
-        
-        # Normalize the weights
-        new_weights = new_weights / np.sum(new_weights)
-        self.states.append(new_states)
-        self.weights.append(new_weights)
+        new_states = torch.zeros(self.bs, self.K, 3)
+        new_weights = torch.zeros(self.bs, self.K)
+
+        for i in range(3):                                            
+            for j in range(self.bs):
+                component_samples = torch.multinomial(prob_stack[i][j], self.K, replacement=True)
+                for k, component in enumerate(component_samples):
+                    mean_component = mean[i][j]
+                    covariance_component = covariance[i][j]
+                    mvn = MultivariateNormal(mean_component, covariance_component) 
+                    chosen_sample = mvn.sample()
+                    new_states[j][k][i] = self.states[j][k][i] + chosen_sample[component]
+                    new_weights[j][k] = self.weights[j][k] * mvn.log_prob(chosen_sample)
+        self.states = new_states
+        self.weights = new_weights      
         return new_states, new_weights
+    
 
     def calc_average_trajectory(self, new_states, new_weights):
         # Calculate the average trajectory
-        pose_estimate = [0, 0, 0]
+        pose_estimate = torch.zeros(self.bs, 3)
         for i in range(self.K):
-            pose_estimate[0] += new_states[i][0] * new_weights[i]
-            pose_estimate[1] += new_states[i][1] * new_weights[i]
-            pose_estimate[2] += new_states[i][2] * new_weights[i]
+            pose_estimate[:, 0] += new_states[:, i, 0] * new_weights[:, i]
+            pose_estimate[:, 1] += new_states[:, i, 1] * new_weights[:, i]
+            pose_estimate[:, 2] += new_states[:, i, 2] * new_weights[:, i]
         self.trajectory_estimate.append(pose_estimate)
         return pose_estimate
 

@@ -21,7 +21,7 @@ def main(arg):
     print(f"imagePrev1: {imagePrev1.shape}, image1: {image1.shape}, pose1.x: {pose1['x'].shape}, pose1.y: {pose1['y'].shape}, pose1.yaw: {pose1['yaw'].shape}")
     print(f"imagePrev2: {imagePrev2.shape}, image2: {image2.shape}, pose2.x: {pose2['x'].shape}, pose2.y: {pose2['y'].shape}, pose2.yaw: {pose2['yaw'].shape}")
 
-    slamNet = SlamNet(imagePrev1.shape[1:], arg.num_particles).cuda()
+    slamNet = SlamNet(imagePrev1.shape, arg.num_particles).cuda()
     output = slamNet(imagePrev1, image1)
 
 
