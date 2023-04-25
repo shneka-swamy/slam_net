@@ -18,6 +18,11 @@ def huber_loss(pose_estimated, actual_pose, delta = 0.1):
     is_small_res = residual < delta
     return torch.where(is_small_res, 0.5 * residual ** 2, delta * (residual - 0.5 * delta))
 
+# RMSE loss
+def rmse_loss(pose_estimated, actual_pose):
+    residual = torch.abs(pose_estimated - actual_pose)
+    return torch.sqrt(torch.mean(residual ** 2))
+
 def lossfunction():
     return huber_loss
 
@@ -145,7 +150,7 @@ def test(arg, model, model_file, device):
 
     print(f"Number of test data: {len(testData)}")
 
-    criterion = lossfunction()
+    criterion = rmse_loss
     totalLoss = 0.0
     runningLoss = 0.0
 

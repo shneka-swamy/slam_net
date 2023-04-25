@@ -94,8 +94,9 @@ class MappingModel(nn.Module):
 
     def __init__(self, N_ch, use_cuda):
         super(MappingModel, self).__init__()
-        channels, height, width = self.perspective_shape()
-        assert channels == 1 and height == width and height == 80, "Perspective shape is not correct"
+        channels = 1 
+        height = 80
+        width = 80
         self.convs = nn.ModuleList([
             CoordConv(channels, 8, kernel_size=5, stride=1, dilation=4, padding=8, use_cuda=use_cuda),
             CoordConv(channels, 8, kernel_size=5, stride=1, dilation=2, padding=4, use_cuda=use_cuda),
@@ -234,8 +235,10 @@ class SlamNet(nn.Module):
         self.is_pretrain_obs = is_pretrain_obs
 
         assert(len(inputShape) == 4)
-        #self.mapping = MappingModel(N_ch=16, use_cuda=use_cuda)
-        self.visualTorso = TransitionModel(inputShape[1:], use_cuda=use_cuda)
+        if self.is_training or self.is_pretrain_obs:
+            self.mapping = MappingModel(N_ch=16, use_cuda=use_cuda)
+        if self.is_training or self.is_pretrain_trans:
+            self.visualTorso = TransitionModel(inputShape[1:], use_cuda=use_cuda)
         if inputShape[1] == 3:
             numFeatures = 2592
         else:
