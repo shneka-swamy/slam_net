@@ -9,19 +9,19 @@ from torch.distributions import MultivariateNormal
 from coordconv import CoordConv2d as CoordConv
 
 class TransitionModel(nn.Module):
-    def __init__(self, inputShape):
+    def __init__(self, inputShape, use_cuda):
         super(TransitionModel, self).__init__()
         channels, height, width = inputShape
         self.front = nn.Sequential(
-            CoordConv(channels*3, 32, kernel_size=3, stride=1, padding=1),
+            CoordConv(channels*3, 32, kernel_size=3, stride=1, padding=1, use_cuda=use_cuda),
             nn.LayerNorm([32, height, width]),
             nn.ReLU(),
         )
         self.convs = nn.ModuleList([
-            CoordConv(32, 8, kernel_size=5, stride=1, dilation=4, padding=8),
-            CoordConv(32, 8, kernel_size=5, stride=1, dilation=2, padding=4),
-            CoordConv(32, 16, kernel_size=5, stride=1, dilation=1, padding=2),
-            CoordConv(32, 32, kernel_size=3, stride=1, dilation=1, padding=1),
+            CoordConv(32, 8, kernel_size=5, stride=1, dilation=4, padding=8, use_cuda=use_cuda),
+            CoordConv(32, 8, kernel_size=5, stride=1, dilation=2, padding=4, use_cuda=use_cuda),
+            CoordConv(32, 16, kernel_size=5, stride=1, dilation=1, padding=2, use_cuda=use_cuda),
+            CoordConv(32, 32, kernel_size=3, stride=1, dilation=1, padding=1, use_cuda=use_cuda),
         ])
         self.body_first = nn.Sequential(
             nn.MaxPool2d(kernel_size=3, stride=2),
@@ -29,21 +29,21 @@ class TransitionModel(nn.Module):
             nn.ReLU(),
         )
         self.body_second = nn.Sequential(
-            CoordConv(64, 128, kernel_size=3, stride=1, padding=1),
+            CoordConv(64, 128, kernel_size=3, stride=1, padding=1, use_cuda=use_cuda),
             nn.ReLU(),
-            CoordConv(128, 64, kernel_size=3, stride=1, padding=1),
+            CoordConv(128, 64, kernel_size=3, stride=1, padding=1, use_cuda=use_cuda),
             nn.ReLU(),
         )
         self.body_third = nn.Sequential(
-            CoordConv(64, 128, kernel_size=3, stride=1, padding=1),
+            CoordConv(64, 128, kernel_size=3, stride=1, padding=1, use_cuda=use_cuda),
             nn.ReLU(),
-            CoordConv(128, 64, kernel_size=3, stride=1, padding=1),
+            CoordConv(128, 64, kernel_size=3, stride=1, padding=1, use_cuda=use_cuda),
             nn.ReLU(),
         )
         self.body_fourth = nn.Sequential(
-            CoordConv(64, 64, kernel_size=4, stride=2),
+            CoordConv(64, 64, kernel_size=4, stride=2, use_cuda=use_cuda),
             nn.ReLU(),
-            CoordConv(64, 16, kernel_size=4, stride=2)
+            CoordConv(64, 16, kernel_size=4, stride=2, use_cuda=use_cuda)
         )
 
     def forward(self, observation, observationPrev):
@@ -88,15 +88,15 @@ class GMModel(nn.Module):
 
 class MappingModel(nn.Module):
 
-    def __init__(self, N_ch):
+    def __init__(self, N_ch, use_cuda):
         super(MappingModel, self).__init__()
         #channels, height, width = self.perspective_shape()
         channels, height, width = 1, 80, 80
         self.convs = nn.ModuleList([
-            CoordConv(channels, 8, kernel_size=5, stride=1, dilation=4, padding=8),
-            CoordConv(channels, 8, kernel_size=5, stride=1, dilation=2, padding=4),
-            CoordConv(channels, 16, kernel_size=5, stride=1, dilation=1, padding=2),
-            CoordConv(channels, 32, kernel_size=3, stride=1, dilation=1, padding=1),
+            CoordConv(channels, 8, kernel_size=5, stride=1, dilation=4, padding=8, use_cuda=use_cuda),
+            CoordConv(channels, 8, kernel_size=5, stride=1, dilation=2, padding=4, use_cuda=use_cuda),
+            CoordConv(channels, 16, kernel_size=5, stride=1, dilation=1, padding=2, use_cuda=use_cuda),
+            CoordConv(channels, 32, kernel_size=3, stride=1, dilation=1, padding=1, use_cuda=use_cuda),
         ])
         self.body_first = nn.Sequential(
             nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
@@ -104,15 +104,15 @@ class MappingModel(nn.Module):
             nn.ReLU(),
         )
         self.body_second = nn.Sequential(
-            CoordConv(64, 32, kernel_size=3, stride=1, padding=1),
+            CoordConv(64, 32, kernel_size=3, stride=1, padding=1, use_cuda=use_cuda),
             nn.LayerNorm([32, height//2, width//2]),
             nn.ReLU(),
-            CoordConv(32, 64, kernel_size=3, stride=1, padding=1),
+            CoordConv(32, 64, kernel_size=3, stride=1, padding=1, use_cuda=use_cuda),
             nn.LayerNorm([64, height//2, width//2]),
             nn.ReLU(),
         )
         self.body_third = nn.Sequential(
-            CoordConv(64, N_ch, kernel_size=3, stride=1, padding=1)
+            CoordConv(64, N_ch, kernel_size=3, stride=1, padding=1, use_cuda=use_cuda)
         )
 
     def forward(self, observation):
@@ -177,14 +177,14 @@ class MappingModel(nn.Module):
 
 class ObservationModel(nn.Module):
 
-    def __init__(self):
+    def __init__(self, use_cuda):
         super(ObservationModel, self).__init__()
         self.body_first = nn.Sequential(
-            CoordConv(2, 64, kernel_size=5, stride=1),
+            CoordConv(2, 64, kernel_size=5, stride=1, use_cuda=use_cuda),
             nn.MaxPool2d(kernel_size=3, stride=2),
             nn.LayerNorm(),
             nn.ReLU(),
-            CoordConv(64, 32, kernel_size=3, stride=1),
+            CoordConv(64, 32, kernel_size=3, stride=1, use_cuda=use_cuda),
         )
         self.body_second = nn.ModuleList([
             nn.MaxPool2d(kernel_size=3, stride=2),
@@ -227,7 +227,8 @@ Apart from that the model can be in one of the following modes:
 """
 class SlamNet(nn.Module):
     # TODO: This function needs to be updated with the training or testing mode parameter
-    def __init__(self, inputShape, K, is_training=False, is_pretrain_trans=False, is_pretrain_obs=False):
+    def __init__(self, inputShape, K, is_training=False, is_pretrain_trans=False, is_pretrain_obs=False,
+                 use_cuda=True):
         super(SlamNet, self).__init__()
         # NOTE: The current implementation assumes that the states are always kept with the weight
         self.bs = inputShape[0]
@@ -243,8 +244,8 @@ class SlamNet(nn.Module):
         self.is_pretrain_obs = is_pretrain_obs
 
         assert(len(inputShape) == 4)
-        self.mapping = MappingModel(N_ch=16)
-        self.visualTorso = TransitionModel(inputShape[1:])
+        self.mapping = MappingModel(N_ch=16, use_cuda=use_cuda)
+        self.visualTorso = TransitionModel(inputShape[1:], use_cuda=use_cuda)
         if inputShape[1] == 3:
             numFeatures = 2592
         else:
