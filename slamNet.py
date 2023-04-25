@@ -287,7 +287,8 @@ class SlamNet(nn.Module):
 
     # find the huber loss between the estimated pose and the ground truth pose
     # The value of delta can be altered
-    def huber_loss (self, pose_estimated, actual_pose, delta = 0.1):
+    @staticmethod
+    def huber_loss(pose_estimated, actual_pose, delta = 0.1):
         residual = torch.abs(pose_estimated - actual_pose)
         is_small_res = residual < delta
         return torch.where(is_small_res, 0.5 * residual ** 2, delta * (residual - 0.5 * delta))        
@@ -295,7 +296,8 @@ class SlamNet(nn.Module):
     # Resample the particles based on the weights
     # NOTE: Paper does not mention if the resampling is hard or soft and hence we use soft to avaoid zero gradient
     # NOTE: This function is a PyTorch version of the PFNet implementation
-    def resample(self, particle_states, particle_weights, alpha=torch.tensor([0])):
+    @staticmethod
+    def resample(particle_states, particle_weights, alpha=torch.tensor([0])):
         batch_size, num_particles = particle_states.shape[:2]
 
         # normalize

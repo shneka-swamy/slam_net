@@ -6,6 +6,8 @@ from PIL import Image
 
 import itertools
 
+from tqdm import tqdm
+
 import torch
 from torchvision import transforms
 from torchvision.datasets.utils import download_and_extract_archive, check_integrity, calculate_md5
@@ -18,9 +20,7 @@ class KittiDataset(VisionDataset):
     data_url = "https://s3.eu-central-1.amazonaws.com/avg-kitti/"
     data_raw_url = data_url + "raw_data/"
 
-    filter_scenarios = [
-        "2011_09_29",
-    ]
+    filter_scenarios = []
 
     resources = {
             "data_depth_annotated.zip": "7d1ce32633dc2f43d9d1656a1f875e47",
@@ -28,6 +28,7 @@ class KittiDataset(VisionDataset):
     }
 
     def __init__(self, root:str, train:bool = True,
+                 validation:bool = False,
                  transform: Optional[Callable] = None,
                  target_transform: Optional[Callable] = None,
                  transforms: Optional[Callable] = None,
@@ -51,6 +52,13 @@ class KittiDataset(VisionDataset):
             self._extracted_folder.mkdir(parents=True)
 
         self.scenariosFile = Path(self.root) / "kittiMd5.txt"
+        if train:
+            if validation:
+                self.filter_scenarios = ["2011_10_03"]
+            else:
+                self.filter_scenarios = ["2011_09_26", "2011_09_28"]
+        if not train:
+            self.filter_scenarios = ["2011_09_29", "2011_09_30"]
         self.scenarios = self._getScenarios(self.scenariosFile, self.filter_scenarios)
 
         if download:
@@ -58,17 +66,20 @@ class KittiDataset(VisionDataset):
         if not self._check_exists():
             raise RuntimeError("Dataset not found. You can use download=True to download it")
 
-        datalist, calib = self._parse_data()
-        self.datalist = []
-        for data in datalist:
-            # copy everthing from data to new dict and add calib with key "calib"
-            newData = {**data, "calib": calib}
-            self.datalist.append(newData)
+        self.datalist = self._parse_datas(self.scenarios)
 
-    def __getitem__(self, index: int) -> Tuple[Any, Any, Any, Any, Any]:
-        imagePrev = self._rgbd(index)
-        image = self._rgbd(index+1)
-        pose = self._pose(index+1)
+    def poseGenerator(self, batch_size):
+        for index in range(0, len(self.datalist), batch_size):
+            poses = []
+            for i in range(index, index + batch_size):
+                poses.append(self._absPose(i))
+            poses = {k: torch.stack([torch.tensor(d[k], dtype=torch.float64) for d in poses], dim=0) for k in poses[0].keys()}
+            yield poses
+
+    def __getitem__(self, index: int) -> Tuple[Any, Any, Any]:
+        imagePrev = self._rgbdPrev(index)
+        image = self._rgbd(index)
+        pose = self._absPose(index)
 
         if self.transforms:
             imagePrev = self.transforms(imagePrev)
@@ -76,9 +87,24 @@ class KittiDataset(VisionDataset):
         return imagePrev, image, pose
 
     def __len__(self) -> int:
-        return len(self.datalist)-1
+        return len(self.datalist)
 
-    def _parse_data(self) -> Tuple[List[Any], dict]:
+    def _parse_datas(self, scenarios) -> List[dict]:
+        newDataList = []
+        with tqdm(total=len(scenarios), desc="reading files") as pbar:
+            for folder_file, _ in scenarios:
+                datalist = self._parse_folder(folder_file)
+                datalistdict = []
+                for i in range(0, len(datalist)-1):
+                    datalistdict.append({"leftRgbPrev":datalist[i]["leftRgb"],
+                                         "leftDepthPrev":datalist[i]["leftDepth"],
+                                         **datalist[i+1]})
+                newDataList.extend(datalistdict)
+                pbar.update(1)
+        return newDataList
+
+
+    def _parse_folder(self, folder_file) -> List[Any]:
         listImages = []
         calib = {}
         for folder_file, _ in self.scenarios:
@@ -116,8 +142,8 @@ class KittiDataset(VisionDataset):
                 rgbImagePath = rgb_folder / filename
                 assert int(filename.split('.')[0]) < len(posesList), f"pose index {int(filename.split('.')[0])} < {len(posesList)} out of range"
                 pose = posesList[int(filename.split('.')[0])]
-                listImages.append({"leftRgb":rgbImagePath, "leftDepth":depthImagePath, "pose":pose})
-        return listImages, calib
+                listImages.append({"leftRgb":rgbImagePath, "leftDepth":depthImagePath, "absPose":pose["absolutePose"], "relPose":pose["relativePose"]})
+        return listImages
 
     @property
     def _download_folder(self) -> Path:
@@ -139,15 +165,24 @@ class KittiDataset(VisionDataset):
         # convert oxts to pose
         assert delta > 0
         currentPose = {"x":0, "y":0, "yaw":0}
-        # dictionary of 'vf', 'vl', 'vu' and 'ax', 'ay', 'az', 'af', 'al', 'au' 'wx', 'wy', 'wz', 'wf', 'wl', 'wu', 'pos_accuracy', 'vel_accuracy', 'navstat', 'numsats', 'posmode', 'velmode', 'orimode'
+        # dictionary of 'vf', 'vl', 'vu' and 'ax', 'ay', 'az', 'af', 'al', 'au' 'wx', 'wy', 'wz', 'wf', 'wl', 'wu', 'pos_accuracy', 'vel_accuracy'
         # calculate displacement in x, y and yaw
         x = (oxt['vf'] - prevOxt['vf']) / delta
         y = (oxt['vl'] - prevOxt['vl']) / delta
         yaw = (oxt['vu'] - prevOxt['vu']) / delta
-        return {"x":x, "y":y, "yaw":yaw}
-    
-    def _pose(self, index):
-        return self.datalist[index]["pose"]
+        currentPose['x'] = prevPose['x'] + x
+        currentPose['y'] = prevPose['y'] + y
+        currentPose['yaw'] = prevPose['yaw'] + yaw
+        return {"absolutePose":currentPose, "relativePose": {"x":x, "y":y, "yaw":yaw}}
+
+    def _absPose(self, index):
+        return self.datalist[index]["absPose"]
+
+    def _relPose(self, index):
+        return self.datalist[index]["relPose"]
+
+    def _rgbdPrev(self, index):
+        return self._rgbdTensor(self.datalist[index]["leftRgbPrev"], self.datalist[index]["leftDepthPrev"])
 
     def _rgbd(self, index):
         return self._rgbdTensor(self.datalist[index]["leftRgb"], self.datalist[index]["leftDepth"])
@@ -179,7 +214,7 @@ class KittiDataset(VisionDataset):
             for line in f:
                 date, time = line.strip().split(" ")
                 yield date, time
-    
+
     def _convertTime(self, time) -> float:
         # convert hh:mm:ss.mmmmmm to seconds
         h, m, s = time.split(":")
@@ -205,7 +240,7 @@ class KittiDataset(VisionDataset):
                 key = key[:-1] # remove ":" at the end
                 oxts_keys.append(key)
         return oxts_keys
-    
+
     def _calib_to_dict(self, calibFile: Path) -> dict:
         calib = {}
         with open(calibFile, "r") as f:
