@@ -115,7 +115,11 @@ def test(arg, model, model_file):
 def main(arg):
     torch.autograd.set_detect_anomaly(True)
     expected_shape = (arg.batch_size, 4, 90, 160)
-    slamNet = SlamNet(expected_shape, arg.num_particles, is_training=arg.is_training, is_pretrain_obs=arg.is_pretrain_obs, is_pretrain_trans= arg.is_pretrain_trans).cuda()
+    slamNet = SlamNet(expected_shape, arg.num_particles, is_training=arg.is_training, is_pretrain_obs=arg.is_pretrain_obs, is_pretrain_trans= arg.is_pretrain_trans)
+    if arg.cpu:
+        slamNet = slamNet.cpu()
+    else:
+        slamNet = slamNet.cuda()
 
     if arg.test_only:
         test(arg, slamNet, arg.load_model)

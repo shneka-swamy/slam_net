@@ -20,6 +20,8 @@ def commandParser():
     parser.add_argument('--decay-rate', default=0.5, type=float, help='Initial learning rate')
     parser.add_argument('--decay-step', default=4, type=int, help='Decay step')
 
+    parser.add_argument('--cpu', action='store_true', help='run on cpu')
+
     parser.add_argument('--test-only', action='store_true', help='Test only')
     maxSaveNumber = -1
     for files in Path('model').glob('slamNet_v*.pth'):
