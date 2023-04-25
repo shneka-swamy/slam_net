@@ -177,12 +177,13 @@ class KittiDataset(VisionDataset):
         currentPose = {"x":0, "y":0, "yaw":0}
         # dictionary of 'vf', 'vl', 'vu' and 'ax', 'ay', 'az', 'af', 'al', 'au' 'wx', 'wy', 'wz', 'wf', 'wl', 'wu', 'pos_accuracy', 'vel_accuracy'
         # calculate displacement in x, y and yaw
-        x = (oxt['vf'] - prevOxt['vf']) / delta
-        y = (oxt['vl'] - prevOxt['vl']) / delta
-        yaw = (oxt['vu'] - prevOxt['vu']) / delta
+        x = (oxt['vf'] - prevOxt['vf']) * delta
+        y = (oxt['vl'] - prevOxt['vl']) * delta
+        #yaw = (oxt['vu'] - prevOxt['vu']) * delta
         currentPose['x'] = prevPose['x'] + x
         currentPose['y'] = prevPose['y'] + y
-        currentPose['yaw'] = prevPose['yaw'] + yaw
+        currentPose['yaw'] = oxt['yaw']
+        yaw = currentPose['yaw'] - prevPose['yaw']
         return {"absolutePose":currentPose, "relativePose": {"x":x, "y":y, "yaw":yaw}}
 
     def _absPose(self, index):
