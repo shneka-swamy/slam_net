@@ -1,13 +1,14 @@
 from arguments import commandParser
 from slamNet import SlamNet
 import torch
-from kittiDataset import KittiDataset
+from kittiDataset import KittiDataset, KittiDatasetType
 
 from torchvision import transforms
 import torch.optim as optim
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
+from itertools import islice
 from tqdm import tqdm
 
 # find the huber loss between the estimated pose and the ground truth pose
@@ -23,16 +24,23 @@ def lossfunction():
 def optimizerfunction(net, lr):
     return optim.SGD(net.parameters(), lr=lr)
 
-def validation(model, dataLoader, criterion):
+def set_max_elements(data_len, arg):
+    itermediate = 1 if data_len % arg.batch_size > 0 else 0
+    return data_len//arg.batch_size + itermediate if arg.max_elements == -1 else arg.max_elements//arg.batch_size + itermediate
+
+def validation(model, dataLoader, criterion, validation_data_len, device):
     totalLoss = 0.0
+    max_elements = set_max_elements(validation_data_len, arg)
     with torch.no_grad():
-        with tqdm(total = len(dataLoader), desc=f"Validation", position=2) as batchBar:
-            for imagePrev, image, pose in dataLoader:
+        with tqdm(total = max_elements, desc=f"Validation", position=2) as validationBar:
+            for imagePrev, image, pose in islice(dataLoader, 0, max_elements):
+                pose = pose.to(device=device)
                 output = model(imagePrev, image)
                 loss = criterion(output, pose)
                 totalLoss += loss.sum().item()
+                validationBar.update(1)
 
-            batchBar.desc = f"Validation loss: {totalLoss / len(dataLoader)}"
+            validationBar.desc = f"Validation loss: {totalLoss / max_elements}"
 
     return totalLoss
 
@@ -65,11 +73,13 @@ def validationChange(validationLosses, validationLossIdx, epolison=0.01):
 #     return x_loss + y_loss + yaw_loss
 
 
-def train(arg, slamNet):
-    train_data = KittiDataset(arg.dataset_path, download=arg.download_dataset, disableExpensiveCheck=True)
+def train(arg, slamNet, device):
+
+    train_type = KittiDatasetType.eTrain if not arg.dummy_train else KittiDatasetType.eDummyTrain
+    train_data = KittiDataset(arg.dataset_path, type=train_type, download=arg.download_dataset, disableExpensiveCheck=True)
     dataLoader = DataLoader(train_data, batch_size=arg.batch_size, shuffle=False, num_workers=arg.num_workers, pin_memory=True)
 
-    validation_data = KittiDataset(arg.dataset_path, download=arg.download_dataset, disableExpensiveCheck=True,validation=True)
+    validation_data = KittiDataset(arg.dataset_path, type=KittiDatasetType.eValidation, download=arg.download_dataset, disableExpensiveCheck=True,validation=True)
     validation_dataLoader = DataLoader(validation_data, batch_size=arg.batch_size, shuffle=False, num_workers=arg.num_workers, pin_memory=True)
 
     print(f"Number of training data: {len(train_data)}")
@@ -88,13 +98,14 @@ def train(arg, slamNet):
         for epoch in range(arg.epochs):
             epochLoss = 0.0
             runningLoss = 0.0
-            with tqdm(total = len(dataLoader), desc=f"Epoch {epoch} / {arg.epochs}", position=1) as batchBar:
-                for i, (imagePrev, image, pose) in enumerate(dataLoader, 0):
+            max_elements = set_max_elements(len(train_data), arg)
+            with tqdm(total = max_elements, desc=f"Epoch {epoch} / {arg.epochs}", position=1) as batchBar:
+                for i, (imagePrev, image, pose) in enumerate(islice(dataLoader, 0, max_elements), 0):
 
                     optimizer.zero_grad()
 
                     output = slamNet(imagePrev, image)
-                    pose = pose.cpu() if arg.cpu else pose.cuda()
+                    pose = pose.to(device=device)
                     #loss = dummyLoss(x, y, yaw)
 
                     loss = criterion(output, pose)
@@ -104,19 +115,17 @@ def train(arg, slamNet):
 
                     optimizer.step()
 
-                    batchBar.update(imagePrev.shape[0])
+                    batchBar.update(1)
 
                     runningLoss += loss_sum_item
                     epochLoss += loss_sum_item
-                    if i % 2000 == 1999:
+                    if (i+1) % 2000 == 2000:
                         batchBar.desc = f"Epoch {epoch} / {arg.epochs}, loss: {runningLoss / 2000}"
                         runningLoss = 0.0
 
-            print("Finished epoch")
+            epochBar.desc = f"Epoch {epoch} / {arg.epochs}, average training loss: {epochLoss / max_elements}"
 
-            epochBar.desc = f"Epoch {epoch} / {arg.epochs}, average training loss: {epochLoss / len(dataLoader)}"
-
-            validationLosses[validationLossIdx] = validation(slamNet, validation_dataLoader, criterion)
+            validationLosses[validationLossIdx] = validation(slamNet, validation_dataLoader, criterion, len(validation_data), device)
             validationLossIdx = (validationLossIdx + 1) % arg.decay_step
 
             if epoch + 1 % arg.decay_step == 0 and validationChange(validationLosses, validationLossIdx, decay_step):
@@ -124,31 +133,58 @@ def train(arg, slamNet):
                 optimizer = optimizerfunction(slamNet, lr=arg.lr * (arg.decay_rate ** decay_step))
 
             epochBar.update(1)
+
     print(f"Finished training, saving model to {arg.save_model}")
     torch.save(slamNet.state_dict(), arg.save_model)
 
-def test(arg, model, model_file):
-    model.load_state_dict(torch.load(model_file))
-    testData = KittiDataset(arg.dataset_path, download=arg.download_dataset, train=False, disableExpensiveCheck=True)
+def test(arg, model, model_file, device):
+    testData = KittiDataset(arg.dataset_path, test=KittiDatasetType.eTest, download=arg.download_dataset, train=False, disableExpensiveCheck=True)
     dataLoader = DataLoader(testData, batch_size=arg.batch_size, shuffle=False, num_workers=arg.num_workers, pin_memory=True)
 
+    model.load_state_dict(torch.load(model_file))
+
+    print(f"Number of test data: {len(testData)}")
+
+    criterion = lossfunction()
+    totalLoss = 0.0
+    runningLoss = 0.0
+
+    max_elements = set_max_elements(len(testData), arg)
+    with tqdm(total = max_elements, desc=f"Testing", position=0) as batchBar:
+        with torch.no_grad():
+            for i, (imagePrev, image, pose) in enumerate(islice(dataLoader, 0, max_elements), 0):
+                output = model(imagePrev, image)
+                pose = pose.to(device=device)
+                loss = criterion(output, pose)
+                loss_sum = loss.sum()
+                loss_sum_item = loss_sum.item()
+                totalLoss += loss_sum_item
+                runningLoss += loss_sum_item
+                batchBar.update(1)
+                if (i+1) % 2000 == 2000:
+                    batchBar.desc = f"Testing, average running loss: {runningLoss / 2000}"
+                    runningLoss = 0.0
+
+    print(f"Finished testing, average loss: {totalLoss / max_elements}")
+            
 
 def main(arg):
-    torch.autograd.set_detect_anomaly(True)
     expected_shape = (arg.batch_size, 4, 90, 160)
     use_cuda = False if arg.cpu else True
     slamNet = SlamNet(expected_shape, arg.num_particles, is_training=arg.is_training, is_pretrain_obs=arg.is_pretrain_obs, is_pretrain_trans= arg.is_pretrain_trans, use_cuda=use_cuda)
     if arg.cpu:
         slamNet = slamNet.cpu()
+        device = torch.device('cpu')
     else:
         slamNet = slamNet.cuda()
+        device = torch.device('cuda')
 
     if arg.test_only:
-        test(arg, slamNet, arg.load_model)
+        test(arg, slamNet, arg.load_model, device)
         return
 
-    train(arg, slamNet)
-    test(arg, slamNet, arg.save_model)
+    train(arg, slamNet, device)
+    test(arg, slamNet, arg.save_model, device)
 
 
 if __name__ == "__main__":

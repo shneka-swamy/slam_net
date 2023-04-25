@@ -13,6 +13,8 @@ def commandParser():
     parser.add_argument('--is-training', action='store_true', help='is training')
     parser.add_argument('--is-pretrain-obs', action='store_true', help='is pretraining observation model')
     parser.add_argument('--is-pretrain-trans', action='store_true', help='is pretraining transition model')
+    parser.add_argument('--max-elements', default = -1, type=int, help='Max number of elements to load from the dataset')
+    parser.add_argument('--dummy-train', action='store_true', help='Use smaller dataset for training')
 
     parser.add_argument('--verbose', action='store_true', help='verbose')
     parser.add_argument('--epochs', default=12, type=int, help='Number of epochs')
@@ -25,7 +27,7 @@ def commandParser():
     parser.add_argument('--test-only', action='store_true', help='Test only')
     maxSaveNumber = -1
     for files in Path('model').glob('slamNet_v*.pth'):
-        maxSaveNumber = max(maxSaveNumber, int(files.stem[8:]))
+        maxSaveNumber = max(maxSaveNumber, int(files.stem[-4:]))
     idxSavedFiles = maxSaveNumber + 1
     parser.add_argument('--save-model', default=f'model/slamNet_v{idxSavedFiles:04d}.pth', type=str, help='Path to save the model')
     parser.add_argument('--load-model', default=f'model/slamNet_v{maxSaveNumber:04d}.pth', type=Path, help='Path to load the model')

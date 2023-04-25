@@ -14,6 +14,13 @@ from torchvision.datasets.utils import download_and_extract_archive, check_integ
 from torchvision.datasets.vision import VisionDataset
 
 import pandas as pd
+from enum import Enum
+
+class KittiDatasetType(Enum):
+    eTrain = 0
+    eTest = 1
+    eValidation = 3
+    eDummyTrain = 4
 
 class KittiDataset(VisionDataset):
 
@@ -27,8 +34,8 @@ class KittiDataset(VisionDataset):
             "data_depth_velodyne.zip": "20bd6e7dc741520240a0c471392fe9df",
     }
 
-    def __init__(self, root:str, train:bool = True,
-                 validation:bool = False,
+
+    def __init__(self, root:str, type:KittiDatasetType,
                  transform: Optional[Callable] = None,
                  target_transform: Optional[Callable] = None,
                  transforms: Optional[Callable] = None,
@@ -36,9 +43,7 @@ class KittiDataset(VisionDataset):
                  remove_finished: bool = False,
                  disableExpensiveCheck: bool = False):
         super().__init__(root, transforms, transform, target_transform)
-        self.train = train
         self.root = Path(Path(root) / "kitti_dataset")
-        self._location = "training" if train else "testing"
         self.remove_finished = remove_finished
         self.disableExpensiveCheck = disableExpensiveCheck
         self.shouldDownload = download
@@ -52,14 +57,16 @@ class KittiDataset(VisionDataset):
             self._extracted_folder.mkdir(parents=True)
 
         self.scenariosFile = Path(self.root) / "kittiMd5.txt"
-        if train:
-            if validation:
-                self.filter_scenarios = ["2011_10_03"]
-                self.name = "validation"
-            else:
-                self.filter_scenarios = ["2011_09_26", "2011_09_28"]
-                self.name = "train"
-        if not train:
+        if type == KittiDatasetType.eTrain:
+            self.filter_scenarios = ["2011_09_26", "2011_09_28"]
+            self.name = "train"
+        elif type == KittiDatasetType.eDummyTrain:
+            self.filter_scenarios = ["2011_10_03"]
+            self.name = "dummy train"
+        elif type == KittiDatasetType.eValidation:
+            self.filter_scenarios = ["2011_10_03"]
+            self.name = "validation"
+        elif type == KittiDatasetType.eTest:
             self.filter_scenarios = ["2011_09_29", "2011_09_30"]
             self.name = "test"
         self.scenarios = self._getScenarios(self.scenariosFile, self.filter_scenarios)
