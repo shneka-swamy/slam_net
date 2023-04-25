@@ -163,8 +163,8 @@ def test(arg, model, model_file, device):
                 output = model(imagePrev, image)
                 pose = pose.to(device=device)
                 loss = criterion(output, pose)
-                print(output)
-                print(pose)
+                #print(output)
+                #print(pose)
                 loss_sum = loss.sum()
                 loss_sum_item = loss_sum.item()
                 totalLoss += loss_sum_item
