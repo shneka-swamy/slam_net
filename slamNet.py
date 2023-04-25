@@ -51,17 +51,23 @@ class TransitionModel(nn.Module):
 
         concatObservations = torch.cat((observation, observationPrev, diffObservation), dim=1)
 
-        x = self.front(concatObservations)
-        x_conv = torch.cat([conv(x) for conv in self.convs], dim=1)
+        x_front = self.front(concatObservations)
+        x_conv = []
+        for conv in self.convs:
+            x_new = conv(x_front)
+            x_conv.append(x_new)
 
-        xi1 = self.body_first(x_conv)
+        x_cat = torch.cat(x_conv, dim=1)
+        #x_conv = torch.cat([conv(x) for conv in self.convs], dim=1)
+
+        xi1 = self.body_first(x_cat)
         xi2 = xi1 + self.body_second(xi1)
         xi3 = xi2 + self.body_third(xi2)
-        x = self.body_fourth(xi3)
+        x_fourth = self.body_fourth(xi3)
 
-        x = x.view(x.size(0), -1)
+        x_final = x_fourth.view(x_fourth.size(0), -1)
 
-        return x
+        return x_final
 
 class GMModel(nn.Module):
     def __init__(self, num_features, k):
@@ -82,8 +88,8 @@ class GMModel(nn.Module):
         mu = self.mu(xn)
         sigma = self.sigma(xn)
         logvar = self.logvar(xn)
-        return {'mu': mu, 'sigma': sigma, 'logvar': logvar}
-
+        return mu, sigma, logvar
+       #return {'mu': mu, 'sigma': sigma, 'logvar': logvar}
 
 class MappingModel(nn.Module):
 
@@ -264,10 +270,11 @@ class SlamNet(nn.Module):
             x = self.gmmX(featureVisual)
             y = self.gmmY(featureVisual)
             yaw = self.gmmYaw(featureVisual)
+ 
 
             if self.is_pretrain_trans:
                 # Using x, y, yaw to calculate the new state
-                new_states, new_weights = self.calculateNewState(x, y, yaw)
+                new_states, new_weights = self.calculateNewStateDummy(x, y, yaw)
                 #print(new_states.shape, new_weights.shape)
 
         #new_states, new_weights = self.resample(new_states, new_weights)
@@ -328,6 +335,68 @@ class SlamNet(nn.Module):
 
         return particle_states, particle_weights
 
+    def calculateNewStateDummy(self, x, y, yaw):
+        # x, y, yaw are all given as dictionaries
+        # x, y, yaw cannot be joined as all of them have different GMM
+        x_mu, x_sigma, x_logvar = x
+        y_mu, y_sigma, y_logvar = y
+        yaw_mu, yaw_sigma, yaw_logvar = yaw
+        mean = torch.stack([x_mu, y_mu, yaw_mu])
+
+        # Make sigma a diagonal matrix with batch size as the first dimension
+        x_cov_diag = torch.diag_embed(x_sigma**2)
+        x_cov = torch.bmm(x_cov_diag, x_cov_diag.transpose(1, 2))
+        y_cov_diag = torch.diag_embed(y_sigma**2)
+        y_cov = torch.bmm(y_cov_diag, y_cov_diag.transpose(1, 2))
+        yaw_cov_diag = torch.diag_embed(yaw_sigma**2)
+        yaw_cov = torch.bmm(yaw_cov_diag, yaw_cov_diag.transpose(1, 2))
+
+        covariance = torch.stack([x_cov, y_cov, yaw_cov])
+        prob_stack = torch.stack([x_logvar, y_logvar, yaw_logvar])
+     
+
+        # prob_stack_abs = torch.abs(prob_stack)
+        # total = torch.sum(prob_stack_abs)
+        # prob_stack_changed = prob_stack_abs / total
+        # print(f"prob_stack_changed: {prob_stack_changed._version} {prob_stack_changed.shape}")
+        # prob_stack_changed_flatten = prob_stack_changed.view(-1, 3)
+        # component_samples = torch.multinomial(prob_stack_changed_flatten, self.K, replacement=True)
+        # print(f"component_samples: {component_samples._version} {component_samples.shape}")
+
+        # states = []
+        # weights = []
+        # for i, component in enumerate(component_samples.shape):
+        #     mvn = MultivariateNormal(mean, covariance)
+        #     states.append(mvn.sample())
+        #     weights.append(mvn.log_prob(states[-1]))
+        # states = torch.stack(states)
+        # weights = torch.stack(weights)
+        # print(f"chosen_sample: {states._version} {states.shape}")
+        # print(f"weights: {weights._version} {weights.shape}")
+        
+        statesList = []
+        weightsList = []
+
+        for i in range(3):
+            for j in range(self.bs):
+                prob_stack_abs = torch.abs(prob_stack[i][j])
+                total = torch.sum(prob_stack_abs)
+                prob_stack_changed = prob_stack_abs / total
+                component_samples = torch.multinomial(prob_stack_changed, self.K, replacement=True)
+                for k, component in enumerate(component_samples):
+                    mean_component = mean[i][j]
+                    covariance_component = covariance[i][j]
+                    mvn = MultivariateNormal(mean_component, covariance_component)
+                    chosen_sample = mvn.sample()
+                    statesList.append(self.states[j][k][i] + chosen_sample[component])
+                    if i == 2:
+                        weightsList.append(self.weights[j][k] * mvn.log_prob(chosen_sample))
+        
+        # change states in shape (bs, K, 3)
+        self.states = torch.stack(statesList).view(self.bs, self.K, 3).to(x_mu.device)
+        self.weights = torch.stack(weightsList).view(self.bs, self.K).to(x_mu.device)
+        return self.states, self.weights
+
 
     def calculateNewState(self, x, y, yaw):
         # x, y, yaw are all given as dictionaries
@@ -370,11 +439,11 @@ class SlamNet(nn.Module):
 
     def calc_average_trajectory(self, new_states, new_weights):
         # Calculate the average trajectory
-        pose_estimate = torch.zeros(self.bs, 3)
+        pose_estimate = torch.zeros(self.bs, 3, device=new_states.device)
         for i in range(self.K):
-            pose_estimate[:, 0] += new_states[:, i, 0] * new_weights[:, i]
-            pose_estimate[:, 1] += new_states[:, i, 1] * new_weights[:, i]
-            pose_estimate[:, 2] += new_states[:, i, 2] * new_weights[:, i]
+            pose_estimate[:, 0] = pose_estimate[:,0] + new_states[:, i, 0] * new_weights[:, i]
+            pose_estimate[:, 1] = pose_estimate[:,1] + new_states[:, i, 1] * new_weights[:, i]
+            pose_estimate[:, 2] = pose_estimate[:,2] + new_states[:, i, 2] * new_weights[:, i]
         self.trajectory_estimate.append(pose_estimate)
         return pose_estimate
 

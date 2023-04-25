@@ -78,6 +78,7 @@ def train(arg, slamNet):
                     optimizer.zero_grad()
 
                     output = slamNet(imagePrev, image)
+                    pose = pose.cpu() if arg.cpu else pose.cuda()
                     loss = criterion(output, pose)
                     loss_sum = loss.sum()
                     loss_sum_item = loss_sum.item()
