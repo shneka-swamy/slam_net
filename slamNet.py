@@ -157,6 +157,7 @@ class MappingModel(nn.Module):
             # Projection matrix
             projection_matrix = np.dot(camera_matrix, extrinsic_matrix)
 
+
             # Perspective transform
             warped_image = cv2.warpPerspective(gray_image, projection_matrix, (gray_image.shape[1], gray_image.shape[0]))
             warped_image = warped_image.reshape(80, 80, 1)

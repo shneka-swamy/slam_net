@@ -13,46 +13,19 @@ import pandas as pd
 class KittiDataset(VisionDataset):
 
     data_url = "https://s3.eu-central-1.amazonaws.com/avg-kitti/"
-    data_raw_url = data_url + "raw_data/"
-
-    # 2011_09_26_drive_0009/2011_09_26_drive_0009_sync.zip
-
-    scenarios = [
-        "2011_09_26_drive_0001",
-        "2011_09_26_drive_0002",
-        "2011_09_26_drive_0005",
-        "2011_09_26_drive_0009",
-        "2011_09_26_drive_0011",
-        "2011_09_26_drive_0013",
-        "2011_09_26_drive_0014",
-        "2011_09_26_drive_0017",
-        "2011_09_26_drive_0018",
-        "2011_09_26_drive_0048",
-        "2011_09_26_drive_0051",
-        "2011_09_26_drive_0056",
-        "2011_09_26_drive_0057",
-        "2011_09_26_drive_0059",
-        "2011_09_26_drive_0060",
-        "2011_09_26_drive_0084",
-        "2011_09_26_drive_0091",
-        "2011_09_26_drive_0093",
-        "2011_09_26_drive_0095",
-        "2011_09_26_drive_0096",
-        "2011_09_26_drive_0104",
-        "2011_09_26_drive_0106",
-        "2011_09_26_drive_0113",
-        "2011_09_26_drive_0117",
-        "2011_09_28_drive_0001",
-        "2011_09_28_drive_0002",
-        "2011_09_29_drive_0026",
-        "2011_09_29_drive_0071",
-    ]
-
     resources = {
+        "color": "data_odometry_color.zip",
+        "velodyne": "data_odometry_velodyne.zip",
+        "calib": "data_odometry_calib.zip",
+        "poses": "data_odometry_poses.zip",
         "depth_annotations": "data_depth_annotated.zip",
         "depth_raw": "data_depth_velodyne.zip",
     }
     md5 = {
+        "color": "d78a1cb675f4f29c675bbf3dc82d7fc5",
+        "velodyne": "93f7e95a9ae6f613c59cadb68c1680e2",
+        "calib": "c88231cf2f7a58ee91d5891b09990539",
+        "poses": "3a0e3b5db6625780a673a4b535e88b78",
         "depth_annotations": "7d1ce32633dc2f43d9d1656a1f875e47",
         "depth_raw": "20bd6e7dc741520240a0c471392fe9df",
     }
@@ -127,7 +100,7 @@ class KittiDataset(VisionDataset):
 
     def _parse_data(self) -> Tuple[List[Any], dict]:
         sequence = "00"
-        sequence_path = self._extracted_raw / "dataset" / "sequences" / sequence
+        sequence_path = self._extracted_odemetry / "dataset" / "sequences" / sequence
         dataList, calib = self._process_sequence_path(sequence_path)
         return dataList, calib
         
@@ -181,7 +154,7 @@ class KittiDataset(VisionDataset):
 
     @property
     def _raw_folder(self) -> str:
-        return self.root / "downloaded"
+        return self.root / "raw"
     
     @property
     def _extracted_folder(self) -> str:
@@ -192,16 +165,13 @@ class KittiDataset(VisionDataset):
         return self._extracted_folder / "depth"
 
     @property
-    def _extracted_raw(self) -> str:
-        return self._extracted_folder / "raw"
+    def _extracted_odemetry(self) -> str:
+        return self._extracted_folder / "odometry"
 
     def _check_exists(self) -> bool:
-
-        return False
-    
         for folders in self.extracted_folders:
-            if not (self._extracted_raw / folders).exists():
-                print("{} not found".format(self._extracted_raw / folders))
+            if not (self._extracted_odemetry / folders).exists():
+                print("{} not found".format(self._extracted_odemetry / folders))
                 return False
         for key, md5 in self.md5.items():
             file = self.resources[key]
@@ -229,7 +199,7 @@ class KittiDataset(VisionDataset):
 
         
         for folders in self.extracted_folders:
-            folder = self._extracted_raw
+            folder = self._extracted_odemetry
             if not folder.exists():
                 print("{} not found".format(folder))
                 return False
@@ -237,7 +207,7 @@ class KittiDataset(VisionDataset):
                 print("{} not found".format(folder / folders))
                 return False
         
-        folder = self._extracted_raw / "dataset" / "sequences"
+        folder = self._extracted_odemetry / "dataset" / "sequences"
         if not folder.exists():
             print("{} not found".format(folder))
             return False
@@ -266,15 +236,10 @@ class KittiDataset(VisionDataset):
         if self._check_exists():
            print("Files already downloaded and verified")
            return
-        for filePrefix in self.scenarios:
-            url = self.data_raw_url + file / f"{file}.zip"
-            file = f"{file}.zip"
-            download_and_extract_archive(url, download_root=self._raw_folder, extract_root=self._extracted_raw, filename=file, md5=None, remove_finished=self.remove_finished)
-        return
         for key, md5 in self.md5.items():
             file = self.resources[key]
             if key == "depth_annotations" or key == "depth_raw":
                 extracted_folder = self._extracted_depth
             else:
-                extracted_folder = self._extracted_raw
+                extracted_folder = self._extracted_odemetry
             download_and_extract_archive(self.data_url + file, download_root=self._raw_folder, extract_root=extracted_folder, filename=file, md5=md5, remove_finished=self.remove_finished)

@@ -1,0 +1,11 @@
+__pycache__
+
+*.swp
+
+.env
+.venv
+env
+venv
+
+dataset/
+env/
