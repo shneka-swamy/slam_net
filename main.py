@@ -30,15 +30,17 @@ def optimizerfunction(net, lr):
     return optim.SGD(net.parameters(), lr=lr)
 
 def set_max_elements(data_len, arg):
-    itermediate = 1 if data_len % arg.batch_size > 0 else 0
-    return data_len//arg.batch_size + itermediate if arg.max_elements == -1 else arg.max_elements//arg.batch_size + itermediate
+    full_data_len = data_len if arg.max_elements == -1 else arg.max_elements
+    itermediate = 1 if full_data_len % arg.batch_size > 0 else 0
+    batched_data_len = full_data_len//arg.batch_size + itermediate
+    return batched_data_len, full_data_len
 
 def validation(model, dataLoader, criterion, validation_data_len, device):
     totalLoss = 0.0
-    max_elements = set_max_elements(validation_data_len, arg)
+    batched_elements, max_elements = set_max_elements(validation_data_len, arg)
     with torch.no_grad():
-        with tqdm(total = max_elements, desc=f"Validation", position=2) as validationBar:
-            for imagePrev, image, pose in islice(dataLoader, 0, max_elements):
+        with tqdm(total = batched_elements, desc=f"Validation", position=2) as validationBar:
+            for imagePrev, image, pose in islice(dataLoader, 0, batched_elements):
                 pose = pose.to(device=device)
                 output = model(imagePrev, image)
                 loss = criterion(output, pose)
@@ -103,9 +105,9 @@ def train(arg, slamNet, device):
         for epoch in range(arg.epochs):
             epochLoss = 0.0
             runningLoss = 0.0
-            max_elements = set_max_elements(len(train_data), arg)
-            with tqdm(total = max_elements, desc=f"Epoch {epoch} / {arg.epochs}", position=1) as batchBar:
-                for i, (imagePrev, image, pose) in enumerate(islice(dataLoader, 0, max_elements), 0):
+            batched_elements, max_elements = set_max_elements(len(train_data), arg)
+            with tqdm(total = batched_elements, desc=f"Epoch {epoch} / {arg.epochs}", position=1) as batchBar:
+                for i, (imagePrev, image, pose) in enumerate(islice(dataLoader, 0, batched_elements), 0):
 
                     optimizer.zero_grad()
 
@@ -154,10 +156,10 @@ def test(arg, model, model_file, device):
     totalLoss = 0.0
     runningLoss = 0.0
 
-    max_elements = set_max_elements(len(testData), arg)
-    with tqdm(total = max_elements, desc=f"Testing", position=0) as batchBar:
+    batched_elements, max_elements = set_max_elements(testData, arg)
+    with tqdm(total = batched_elements, desc=f"Testing", position=0) as batchBar:
         with torch.no_grad():
-            for i, (imagePrev, image, pose) in enumerate(islice(dataLoader, 0, max_elements), 0):
+            for i, (imagePrev, image, pose) in enumerate(islice(dataLoader, 0, batched_elements), 0):
                 output = model(imagePrev, image)
                 pose = pose.to(device=device)
                 loss = criterion(output, pose)
