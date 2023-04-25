@@ -6,7 +6,7 @@ import numpy as np
 
 from coordconv import CoordConv
 
-class slamNet(nn.Module):
+class SlamNet(nn.Module):
     def __init__(self):
         pass
 
