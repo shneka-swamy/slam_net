@@ -38,6 +38,7 @@ def set_max_elements(data_len, arg):
 def validation(model, dataLoader, criterion, validation_data_len, device):
     totalLoss = 0.0
     batched_elements, max_elements = set_max_elements(validation_data_len, arg)
+    print(f"number of validation elements: {max_elements}, batched elements: {batched_elements}")
     with torch.no_grad():
         with tqdm(total = batched_elements, desc=f"Validation", position=2) as validationBar:
             for imagePrev, image, pose in islice(dataLoader, 0, batched_elements):
@@ -101,11 +102,12 @@ def train(arg, slamNet, device):
     validationLosses = [float('inf')] * arg.decay_step
     validationLossIdx = 0
 
+    batched_elements, max_elements = set_max_elements(len(train_data), arg)
+    print(f"Number of train_elements: {max_elements}, batched_elements: {batched_elements}")
     with tqdm(total = arg.epochs, desc=f"Epochs", position=0) as epochBar:
         for epoch in range(arg.epochs):
             epochLoss = 0.0
             runningLoss = 0.0
-            batched_elements, max_elements = set_max_elements(len(train_data), arg)
             with tqdm(total = batched_elements, desc=f"Epoch {epoch} / {arg.epochs}", position=1) as batchBar:
                 for i, (imagePrev, image, pose) in enumerate(islice(dataLoader, 0, batched_elements), 0):
 
@@ -157,6 +159,7 @@ def test(arg, model, model_file, device):
     runningLoss = 0.0
 
     batched_elements, max_elements = set_max_elements(testData, arg)
+    print(f"Number of test data: {len(testData)}, batched_elements: {batched_elements}")
     with tqdm(total = batched_elements, desc=f"Testing", position=0) as batchBar:
         with torch.no_grad():
             for i, (imagePrev, image, pose) in enumerate(islice(dataLoader, 0, batched_elements), 0):

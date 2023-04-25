@@ -177,8 +177,8 @@ class KittiDataset(VisionDataset):
         currentPose = {"x":0, "y":0, "yaw":0}
         # dictionary of 'vf', 'vl', 'vu' and 'ax', 'ay', 'az', 'af', 'al', 'au' 'wx', 'wy', 'wz', 'wf', 'wl', 'wu', 'pos_accuracy', 'vel_accuracy'
         # calculate displacement in x, y and yaw
-        x = (oxt['vf'] - prevOxt['vf']) * delta
-        y = (oxt['vl'] - prevOxt['vl']) * delta
+        x = (oxt['vf']) * delta
+        y = (oxt['vl']) * delta
         #yaw = (oxt['vu'] - prevOxt['vu']) * delta
         currentPose['x'] = prevPose['x'] + x
         currentPose['y'] = prevPose['y'] + y
