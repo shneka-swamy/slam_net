@@ -1,0 +1,1 @@
+# This is the architecture of the SLAM network
