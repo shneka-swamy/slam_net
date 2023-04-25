@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import cv2
 from torch.distributions import MultivariateNormal
-
+from torch.distributions import Categorical, Normal, Independent, MixtureSameFamily
 
 from coordconv import CoordConv2d as CoordConv
 
@@ -270,12 +270,17 @@ class SlamNet(nn.Module):
             x = self.gmmX(featureVisual)
             y = self.gmmY(featureVisual)
             yaw = self.gmmYaw(featureVisual)
- 
+
+        # Testing till x, y, yaw
+        #return x, y, yaw
+
 
             if self.is_pretrain_trans:
-                # Using x, y, yaw to calculate the new state
-                new_states, new_weights = self.calculateNewStateDummy(x, y, yaw)
-                #print(new_states.shape, new_weights.shape)
+                    # Using x, y, yaw to calculate the new state
+                    # Testing if only x can work
+                    new_states, new_weights = self.tryNewState(x, y , yaw)
+                    #new_states, new_weights = self.calculateNewStateDummy(x) #, y, yaw)
+                    #print(new_states.shape, new_weights.shape)
 
         #new_states, new_weights = self.resample(new_states, new_weights)
         #print(new_states.shape, new_weights.shape)
@@ -335,107 +340,35 @@ class SlamNet(nn.Module):
 
         return particle_states, particle_weights
 
-    def calculateNewStateDummy(self, x, y, yaw):
-        # x, y, yaw are all given as dictionaries
-        # x, y, yaw cannot be joined as all of them have different GMM
+    def tryNewState(self, x, y, yaw):
         x_mu, x_sigma, x_logvar = x
         y_mu, y_sigma, y_logvar = y
         yaw_mu, yaw_sigma, yaw_logvar = yaw
-        mean = torch.stack([x_mu, y_mu, yaw_mu])
 
-        # Make sigma a diagonal matrix with batch size as the first dimension
-        x_cov_diag = torch.diag_embed(x_sigma**2)
-        x_cov = torch.bmm(x_cov_diag, x_cov_diag.transpose(1, 2))
-        y_cov_diag = torch.diag_embed(y_sigma**2)
-        y_cov = torch.bmm(y_cov_diag, y_cov_diag.transpose(1, 2))
-        yaw_cov_diag = torch.diag_embed(yaw_sigma**2)
-        yaw_cov = torch.bmm(yaw_cov_diag, yaw_cov_diag.transpose(1, 2))
-
-        covariance = torch.stack([x_cov, y_cov, yaw_cov])
-        prob_stack = torch.stack([x_logvar, y_logvar, yaw_logvar])
-     
-
-        # prob_stack_abs = torch.abs(prob_stack)
-        # total = torch.sum(prob_stack_abs)
-        # prob_stack_changed = prob_stack_abs / total
-        # print(f"prob_stack_changed: {prob_stack_changed._version} {prob_stack_changed.shape}")
-        # prob_stack_changed_flatten = prob_stack_changed.view(-1, 3)
-        # component_samples = torch.multinomial(prob_stack_changed_flatten, self.K, replacement=True)
-        # print(f"component_samples: {component_samples._version} {component_samples.shape}")
-
-        # states = []
-        # weights = []
-        # for i, component in enumerate(component_samples.shape):
-        #     mvn = MultivariateNormal(mean, covariance)
-        #     states.append(mvn.sample())
-        #     weights.append(mvn.log_prob(states[-1]))
-        # states = torch.stack(states)
-        # weights = torch.stack(weights)
-        # print(f"chosen_sample: {states._version} {states.shape}")
-        # print(f"weights: {weights._version} {weights.shape}")
-        
-        statesList = []
-        weightsList = []
-
+        mean_val = torch.cat([x_mu, y_mu, yaw_mu], dim=0)
+        std_values = torch.cat([x_sigma , y_sigma, yaw_sigma], dim=0)
+        # Mean wise multiplication of logvar
+        logvar = []
         for i in range(3):
-            for j in range(self.bs):
-                prob_stack_abs = torch.abs(prob_stack[i][j])
-                total = torch.sum(prob_stack_abs)
-                prob_stack_changed = prob_stack_abs / total
-                component_samples = torch.multinomial(prob_stack_changed, self.K, replacement=True)
-                for k, component in enumerate(component_samples):
-                    mean_component = mean[i][j]
-                    covariance_component = covariance[i][j]
-                    mvn = MultivariateNormal(mean_component, covariance_component)
-                    chosen_sample = mvn.sample()
-                    statesList.append(self.states[j][k][i] + chosen_sample[component])
-                    if i == 2:
-                        weightsList.append(self.weights[j][k] * mvn.log_prob(chosen_sample))
-        
-        # change states in shape (bs, K, 3)
-        self.states = torch.stack(statesList).view(self.bs, self.K, 3).to(x_mu.device)
-        self.weights = torch.stack(weightsList).view(self.bs, self.K).to(x_mu.device)
-        return self.states, self.weights
+            new_value = x_logvar[:, i] * y_logvar[:, i] * yaw_logvar[:, i]
+            logvar.append(new_value)
+        logvar = torch.cat(logvar, dim=0)
 
+        std_values = torch.nn.functional.softplus(std_values)
+        logvar = torch.nn.functional.softplus(logvar)
 
-    def calculateNewState(self, x, y, yaw):
-        # x, y, yaw are all given as dictionaries
-        # x, y, yaw cannot be joined as all of them have different GMM
-        mean = torch.stack([x['mu'], y['mu'], yaw['mu']])
+        distributions = Independent(Normal(mean_val, std_values), 1)
+        mixture_dist = Categorical(logvar)
 
-        # Make sigma a diagonal matrix with batch size as the first dimension
-        x['cov_diag'] = torch.diag_embed(x['sigma']**2)
-        x['covariance'] = torch.bmm(x['cov_diag'], x['cov_diag'].transpose(1, 2))
-        y['cov_diag'] = torch.diag_embed(y['sigma']**2)
-        y['covariance'] = torch.bmm(y['cov_diag'], y['cov_diag'].transpose(1, 2))
-        yaw['cov_diag'] = torch.diag_embed(yaw['sigma']**2)
-        yaw['covariance'] = torch.bmm(yaw['cov_diag'], yaw['cov_diag'].transpose(1, 2))
+        gmm_dist = MixtureSameFamily(mixture_dist, distributions) 
 
-        covariance = torch.stack([x['covariance'], y['covariance'], yaw['covariance']])
-        prob_stack = torch.stack([x['logvar'], y['logvar'], yaw['logvar']])
-     
+        samples = gmm_dist.sample(torch.Size([self.bs, self.K]))
 
-        new_states = torch.zeros(self.bs, self.K, 3)
-        new_weights = torch.zeros(self.bs, self.K)
+        log_probs = gmm_dist.log_prob(samples)
+        weights = torch.exp(log_probs - torch.max(log_probs))
+        weights = weights / torch.sum(weights)
 
-        for i in range(3):
-            for j in range(self.bs):
-                prob_stack_abs = torch.abs_(prob_stack[i][j])
-                total = torch.sum(prob_stack[i][j])
-                print("Total", total)
-                prob_stack_changed = prob_stack_abs / total
-                component_samples = torch.multinomial(prob_stack_changed, self.K, replacement=True)
-                for k, component in enumerate(component_samples):
-                    mean_component = mean[i][j]
-                    covariance_component = covariance[i][j]
-                    mvn = MultivariateNormal(mean_component, covariance_component)
-                    chosen_sample = mvn.sample()
-                    new_states[j][k][i] = self.states[j][k][i] + chosen_sample[component]
-                    new_weights[j][k] = self.weights[j][k] * mvn.log_prob(chosen_sample)
-        self.states = new_states.clone()
-        self.weights = new_weights.clone()
-        return new_states, new_weights
-
+        return samples, weights
 
     def calc_average_trajectory(self, new_states, new_weights):
         # Calculate the average trajectory

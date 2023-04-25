@@ -58,7 +58,6 @@ class KittiDataset(VisionDataset):
                 self.name = "validation"
             else:
                 self.filter_scenarios = ["2011_09_26", "2011_09_28"]
-                self.filter_scenarios = ["2011_10_03"]
                 self.name = "train"
         if not train:
             self.filter_scenarios = ["2011_09_29", "2011_09_30"]

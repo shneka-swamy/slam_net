@@ -49,6 +49,22 @@ def validationChange(validationLosses, validationLossIdx, epolison=0.01):
         return True
     return False
 
+# def dummyLoss(x, y, yaw):
+#     x_default = torch.randn(3)
+#     y_default = torch.randn(3)
+#     yaw_default = torch.randn(3)    
+    
+#     x_mu, x_sigma, x_logvar = x
+#     y_mu, y_sigma, y_logvar = y
+#     yaw_mu, yaw_sigma, yaw_logvar = yaw
+
+#     x_loss = huber_loss(x_mu, x_default) + huber_loss(x_sigma, x_default) + huber_loss(x_logvar, x_default)
+#     y_loss = huber_loss(y_mu, y_default) + huber_loss(y_sigma, y_default) + huber_loss(y_logvar, y_default)
+#     yaw_loss = huber_loss(yaw_mu, yaw_default) + huber_loss(yaw_sigma, yaw_default) + huber_loss(yaw_logvar, yaw_default)
+
+#     return x_loss + y_loss + yaw_loss
+
+
 def train(arg, slamNet):
     train_data = KittiDataset(arg.dataset_path, download=arg.download_dataset, disableExpensiveCheck=True)
     dataLoader = DataLoader(train_data, batch_size=arg.batch_size, shuffle=False, num_workers=arg.num_workers, pin_memory=True)
@@ -79,6 +95,8 @@ def train(arg, slamNet):
 
                     output = slamNet(imagePrev, image)
                     pose = pose.cpu() if arg.cpu else pose.cuda()
+                    #loss = dummyLoss(x, y, yaw)
+
                     loss = criterion(output, pose)
                     loss_sum = loss.sum()
                     loss_sum_item = loss_sum.item()
