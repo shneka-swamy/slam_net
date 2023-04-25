@@ -172,14 +172,6 @@ class MappingModel(nn.Module):
 
         return torch.tensor(all_images).to('cuda')
 
-
-    @staticmethod
-    def perspective_transform_dummy(x):
-        bs, c, h, w = x.shape
-        c, h, w = (1, 80, 80)
-        dummy = torch.zeros([bs, c, h, w], dtype=torch.float32, device=x.device)
-        return dummy
-
 class ObservationModel(nn.Module):
 
     def __init__(self, use_cuda):
@@ -237,8 +229,6 @@ class SlamNet(nn.Module):
         super(SlamNet, self).__init__()
         # NOTE: The current implementation assumes that the states are always kept with the weight
         self.bs = inputShape[0]
-        self.states = torch.zeros([self.bs, K, 3], dtype=torch.float32, device='cuda')
-        self.weights = torch.ones([self.bs, K], dtype=torch.float32, device='cuda')
         self.lastStates = [0,0,0]
         self.lastWeights = 1
         self.K = K
@@ -377,6 +367,6 @@ class SlamNet(nn.Module):
             pose_estimate[:, 0] = pose_estimate[:,0] + new_states[:, i, 0] * new_weights[:, i]
             pose_estimate[:, 1] = pose_estimate[:,1] + new_states[:, i, 1] * new_weights[:, i]
             pose_estimate[:, 2] = pose_estimate[:,2] + new_states[:, i, 2] * new_weights[:, i]
-        self.trajectory_estimate.append(pose_estimate)
+        #self.trajectory_estimate.append(pose_estimate)
         return pose_estimate
 
