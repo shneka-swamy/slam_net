@@ -77,10 +77,10 @@ def train(arg, slamNet, device):
 
     train_type = KittiDatasetType.eTrain if not arg.dummy_train else KittiDatasetType.eDummyTrain
     train_data = KittiDataset(arg.dataset_path, type=train_type, download=arg.download_dataset, disableExpensiveCheck=True)
-    dataLoader = DataLoader(train_data, batch_size=arg.batch_size, shuffle=False, num_workers=arg.num_workers, pin_memory=True)
+    dataLoader = DataLoader(train_data, batch_size=arg.batch_size, shuffle=False, num_workers=arg.num_workers)
 
     validation_data = KittiDataset(arg.dataset_path, type=KittiDatasetType.eValidation, download=arg.download_dataset, disableExpensiveCheck=True)
-    validation_dataLoader = DataLoader(validation_data, batch_size=arg.batch_size, shuffle=False, num_workers=arg.num_workers, pin_memory=True)
+    validation_dataLoader = DataLoader(validation_data, batch_size=arg.batch_size, shuffle=False, num_workers=arg.num_workers)
 
     print(f"Number of training data: {len(train_data)}")
     print(f"Number of validation data: {len(validation_data)}")
