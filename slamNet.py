@@ -72,17 +72,16 @@ class GMModel(nn.Module):
             nn.Linear(1024, 128),
             nn.ReLU(),
         )
-        self.dense_layer = nn.ModuleList([
-            nn.Linear(128, k),
-            nn.Linear(128, k),
-            nn.Linear(128, k),
-        ])
+        self.mu = nn.Linear(128, k)
+        self.sigma = nn.Linear(128, k)
+        self.logvar = nn.Linear(128, k)
+        
 
     def forward(self, x):
-        x = self.model(x)
-        mu = self.dense_layer[0](x)
-        sigma = self.dense_layer[1](x)
-        logvar = self.dense_layer[2](x)
+        xn = self.model(x)
+        mu = self.mu(xn)
+        sigma = self.sigma(xn)
+        logvar = self.logvar(xn)
         return {'mu': mu, 'sigma': sigma, 'logvar': logvar}
 
 
@@ -250,11 +249,9 @@ class SlamNet(nn.Module):
             numFeatures = 2592
         else:
             numFeatures = 2592
-        self.gemHeads = nn.ModuleList([
-            GMModel(numFeatures, 3),
-            GMModel(numFeatures, 3),
-            GMModel(numFeatures, 3),
-        ])
+        self.gmmX = GMModel(numFeatures, 3)
+        self.gmmY = GMModel(numFeatures, 3)
+        self.gmmYaw = GMModel(numFeatures, 3)
 
     # TODO: This function needs more information -- needs to get the ground truth
     # TODO: Please use ground truth parameter for this purpose
@@ -264,9 +261,9 @@ class SlamNet(nn.Module):
 
         if self.is_training or self.is_pretrain_trans:
             featureVisual = self.visualTorso(observation, observationPrev)
-            x = self.gemHeads[0](featureVisual)
-            y = self.gemHeads[1](featureVisual)
-            yaw = self.gemHeads[2](featureVisual)
+            x = self.gmmX(featureVisual)
+            y = self.gmmY(featureVisual)
+            yaw = self.gmmYaw(featureVisual)
 
             if self.is_pretrain_trans:
                 # Using x, y, yaw to calculate the new state
@@ -345,34 +342,29 @@ class SlamNet(nn.Module):
         yaw['cov_diag'] = torch.diag_embed(yaw['sigma']**2)
         yaw['covariance'] = torch.bmm(yaw['cov_diag'], yaw['cov_diag'].transpose(1, 2))
 
-        # Normalize logvar
-        x['logvar'] = x['logvar'] - torch.logsumexp(x['logvar'], dim=-1, keepdim=True)
-        y['logvar'] = y['logvar'] - torch.logsumexp(y['logvar'], dim=-1, keepdim=True)
-        yaw['logvar'] = yaw['logvar'] - torch.logsumexp(yaw['logvar'], dim=-1, keepdim=True)
-        
-                
         covariance = torch.stack([x['covariance'], y['covariance'], yaw['covariance']])
         prob_stack = torch.stack([x['logvar'], y['logvar'], yaw['logvar']])
-        print(prob_stack)
-        #prob_stack = torch.exp(prob_stack)
-        #print(prob_stack)
+     
 
         new_states = torch.zeros(self.bs, self.K, 3)
         new_weights = torch.zeros(self.bs, self.K)
 
         for i in range(3):
             for j in range(self.bs):
-                component_samples = torch.multinomial(prob_stack[i][j], self.K, replacement=True)
+                prob_stack_abs = torch.abs_(prob_stack[i][j])
+                total = torch.sum(prob_stack[i][j])
+                print("Total", total)
+                prob_stack_changed = prob_stack_abs / total
+                component_samples = torch.multinomial(prob_stack_changed, self.K, replacement=True)
                 for k, component in enumerate(component_samples):
                     mean_component = mean[i][j]
                     covariance_component = covariance[i][j]
                     mvn = MultivariateNormal(mean_component, covariance_component)
                     chosen_sample = mvn.sample()
-                    print(chosen_sample)
                     new_states[j][k][i] = self.states[j][k][i] + chosen_sample[component]
                     new_weights[j][k] = self.weights[j][k] * mvn.log_prob(chosen_sample)
-        self.states = new_states
-        self.weights = new_weights
+        self.states = new_states.clone()
+        self.weights = new_weights.clone()
         return new_states, new_weights
 
 
