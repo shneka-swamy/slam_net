@@ -100,7 +100,7 @@ def train(arg, slamNet):
                     loss = criterion(output, pose)
                     loss_sum = loss.sum()
                     loss_sum_item = loss_sum.item()
-                    loss_sum.backward(retain_graph=True) # NOTE: to avoid RuntimeError: grad can be implicitly created only for scalar outputs
+                    loss_sum.backward(retain_graph=False) # NOTE: to avoid RuntimeError: grad can be implicitly created only for scalar outputs
 
                     optimizer.step()
 
