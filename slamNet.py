@@ -256,7 +256,7 @@ class SlamNet(nn.Module):
 
     # TODO: This function needs more information -- needs to get the ground truth
     # TODO: Please use ground truth parameter for this purpose
-    def forward(self, observation, observationPrev, ground_truth):
+    def forward(self, observation, observationPrev):
         if self.is_training or self.is_pretrain_obs:
             map_t = self.mapping(observation)
         
@@ -269,12 +269,16 @@ class SlamNet(nn.Module):
             if self.is_pretrain_trans:
                 # Using x, y, yaw to calculate the new state
                 new_states, new_weights = self.calculateNewState(x, y, yaw)
+                print(new_states.shape, new_weights.shape)
+        
+        #new_states, new_weights = self.resample(new_states, new_weights)
+        #print(new_states.shape, new_weights.shape)
 
         # Calculate the resultant pose estimate
         pose_estimate = self.calc_average_trajectory(new_states, new_weights)
 
         # Calculate the loss between the estimated pose and the ground truth pose
-        #dummy_gt = torch.randn([self.bs, 3], dtype=torch.float32)
+        ground_truth = torch.randn([self.bs, 3], dtype=torch.float32)
         loss = self.huber_loss(pose_estimate, ground_truth)
 
         # TODO: Can return loss instead -- whatever is required for backward pass
@@ -287,6 +291,46 @@ class SlamNet(nn.Module):
         residual = torch.abs(pose_estimated - actual_pose)
         is_small_res = residual < delta
         return torch.where(is_small_res, 0.5 * residual ** 2, delta * (residual - 0.5 * delta))        
+
+    # Resample the particles based on the weights
+    # NOTE: Paper does not mention if the resampling is hard or soft and hence we use soft to avaoid zero gradient
+    # NOTE: This function is a PyTorch version of the PFNet implementation
+    def resample(self, particle_states, particle_weights, alpha=torch.tensor([0])):
+        batch_size, num_particles = particle_states.shape[:2]
+
+        # normalize
+        particle_weights = particle_weights - torch.logsumexp(particle_weights, dim=-1, keepdim=True)
+
+        uniform_weights = torch.full((batch_size, num_particles), -torch.log(torch.tensor(num_particles)), dtype=torch.float32)
+
+        # build sampling distribution, q(s), and update particle weights
+        if alpha < 1.0:
+            # soft resampling
+            q_weights = torch.stack([particle_weights + torch.log(alpha), uniform_weights + torch.log(1.0-alpha)], dim=-1)
+            q_weights = torch.logsumexp(q_weights, dim=-1, keepdim=False)
+            q_weights = q_weights - torch.logsumexp(q_weights, dim=-1, keepdim=True)  # normalized
+
+            particle_weights = particle_weights - q_weights  # this is unnormalized
+        else:
+            # hard resampling. this will produce zero gradients
+            q_weights = particle_weights
+            particle_weights = uniform_weights
+
+        # sample particle indices according to q(s)
+        indices = torch.multinomial(torch.exp(q_weights), num_particles, replacement=True)  # shape: (batch_size, num_particles)
+
+        # index into particles
+        helper = torch.arange(0, batch_size*num_particles, step=num_particles, dtype=torch.int64)  # (batch, )
+        indices = indices + helper.view(batch_size, 1).to(indices.device)
+
+        particle_states = particle_states.view(batch_size * num_particles, 3)
+        particle_states = particle_states.index_select(0, indices.view(-1)).view(batch_size, num_particles, 3)
+
+        particle_weights = particle_weights.view(batch_size * num_particles)
+        particle_weights = particle_weights.index_select(0, indices.view(-1)).view(batch_size, num_particles)
+
+        return particle_states, particle_weights
+
 
     def calculateNewState(self, x, y, yaw):
         # x, y, yaw are all given as dictionaries
