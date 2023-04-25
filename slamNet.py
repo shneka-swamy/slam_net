@@ -217,9 +217,16 @@ class ObservationModel(nn.Module):
         pass
 
 
-
+# NOTE: In general the model is in testing mode
+"""
+Apart from that the model can be in one of the following modes:
+1. Training mode
+2. Pretraining mode -- Transition model
+3. Pretraining mode -- Observation and mapping model
+"""
 class SlamNet(nn.Module):
-    def __init__(self, inputShape, K):
+    # TODO: This function needs to be updated with the training or testing mode parameter
+    def __init__(self, inputShape, K, is_training=False, is_pretrain_trans=False, is_pretrain_obs=False):
         super(SlamNet, self).__init__()
         # NOTE: The current implementation assumes that the states are always kept with the weight
         self.bs = inputShape[0]
@@ -229,6 +236,10 @@ class SlamNet(nn.Module):
         self.lastWeights = 1
         self.K = K
         self.trajectory_estimate = [[0, 0, 0]]
+
+        self.is_training = is_training
+        self.is_pretrain_trans = is_pretrain_trans
+        self.is_pretrain_obs = is_pretrain_obs
 
         assert(len(inputShape) == 4)
         #self.mapping = MappingModel(N_ch=16)
@@ -243,26 +254,30 @@ class SlamNet(nn.Module):
             GMModel(numFeatures, 3),
         ])
 
-    def forward(self, observation, observationPrev):
-        #map_t = self.mapping(observation)
-        featureVisual = self.visualTorso(observation, observationPrev)
-        print(f"featureVisual shape: {featureVisual.shape}")
-        #gmm = self.gmmHead(featureVisual)
-        #return {'map': map_t, 'gmm': gmm}
-        x = self.gemHeads[0](featureVisual)
-        y = self.gemHeads[1](featureVisual)
-        yaw = self.gemHeads[2](featureVisual)
-    
-        # Using x, y, yaw to calculate the new state
-        new_states, new_weights = self.calculateNewState(x, y, yaw)
+    # TODO: This function needs more information -- needs to get the ground truth
+    # TODO: Please use ground truth parameter for this purpose
+    def forward(self, observation, observationPrev, ground_truth):
+        if self.is_training or self.is_pretrain_obs:
+            map_t = self.mapping(observation)
+        
+        if self.is_training or self.is_pretrain_trans:
+            featureVisual = self.visualTorso(observation, observationPrev)
+            x = self.gemHeads[0](featureVisual)
+            y = self.gemHeads[1](featureVisual)
+            yaw = self.gemHeads[2](featureVisual)
+
+            if self.is_pretrain_trans:
+                # Using x, y, yaw to calculate the new state
+                new_states, new_weights = self.calculateNewState(x, y, yaw)
 
         # Calculate the resultant pose estimate
         pose_estimate = self.calc_average_trajectory(new_states, new_weights)
 
         # Calculate the loss between the estimated pose and the ground truth pose
-        dummy_gt = torch.randn([self.bs, 3], dtype=torch.float32)
-        loss = self.huber_loss(pose_estimate, dummy_gt)
+        #dummy_gt = torch.randn([self.bs, 3], dtype=torch.float32)
+        loss = self.huber_loss(pose_estimate, ground_truth)
 
+        # TODO: Can return loss instead -- whatever is required for backward pass
         return {'x': x, 'y': y, 'yaw': yaw}
 
 
