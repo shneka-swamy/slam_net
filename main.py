@@ -8,7 +8,7 @@ from torchvision import transforms
 
 def main(arg):
 
-    dataset = KittiDataset(arg.dataset_path, download=False, disableExpensiveCheck=True)
+    dataset = KittiDataset(arg.dataset_path, download=arg.download_dataset, disableExpensiveCheck=True)
     dataLoader = torch.utils.data.DataLoader(dataset,
                                              batch_size=arg.batch_size,
                                              shuffle=False,

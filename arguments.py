@@ -9,5 +9,7 @@ def commandParser():
     parser.add_argument('--num-particles', default = 128, type=int, help='Number of particles')
     parser.add_argument('--batch-size', default = 16, type=int, help='Batch size')
     parser.add_argument('--num-workers', default = 4, type=int, help='Number of workers')
+    parser.add_argument('--download-dataset', action='store_true', help='should download dataset')
+    parser.add_argument('--verbose', action='store_true', help='verbose')
 
     return parser.parse_args()
