@@ -15,35 +15,8 @@ class KittiDataset(VisionDataset):
     data_url = "https://s3.eu-central-1.amazonaws.com/avg-kitti/"
     data_raw_url = data_url + "raw_data/"
 
-    filer_scenarios = [
-        "2011_09_26_drive_0001",
-        "2011_09_26_drive_0002",
-        "2011_09_26_drive_0005",
-        "2011_09_26_drive_0009",
-        "2011_09_26_drive_0011",
-        "2011_09_26_drive_0013",
-        "2011_09_26_drive_0014",
-        "2011_09_26_drive_0017",
-        "2011_09_26_drive_0018",
-        "2011_09_26_drive_0048",
-        "2011_09_26_drive_0051",
-        "2011_09_26_drive_0056",
-        "2011_09_26_drive_0057",
-        "2011_09_26_drive_0059",
-        "2011_09_26_drive_0060",
-        "2011_09_26_drive_0084",
-        "2011_09_26_drive_0091",
-        "2011_09_26_drive_0093",
-        "2011_09_26_drive_0095",
-        "2011_09_26_drive_0096",
-        "2011_09_26_drive_0104",
-        "2011_09_26_drive_0106",
-        "2011_09_26_drive_0113",
-        "2011_09_26_drive_0117",
-        "2011_09_28_drive_0001",
-        "2011_09_28_drive_0002",
-        "2011_09_29_drive_0026",
-        "2011_09_29_drive_0071",
+    filter_scenarios = [
+        "2011_09_29",
     ]
 
     resources = {
@@ -75,93 +48,50 @@ class KittiDataset(VisionDataset):
             self._extracted_folder.mkdir(parents=True)
 
         self.scenariosFile = Path(self.root) / "kittiMd5.txt"
-        self.scenarios = []
-        for scenarios, md5 in self._getScenarios(self.scenariosFile):
-            if any(filter in scenarios for filter in self.filer_scenarios):
-                self.scenarios.append((scenarios, md5))
+        self.scenarios = self._getScenarios(self.scenariosFile, self.filter_scenarios)
 
         if download:
             self.download()
         if not self._check_exists():
             raise RuntimeError("Dataset not found. You can use download=True to download it")
 
-        self.datalist, self.calib = self._parse_data()
+        datalist, calib = self._parse_data()
+        self.datalist = []
+        for data in datalist:
+            self.datalist.append({"leftRgb":data["leftRgb"], "calib":calib})
 
-    def __getitem__(self, index: int) -> Tuple[Any, Any, Any, Any, Any]: # LeftRGB, RightRGB, Velodyne, Timestamp, CalibDict
+    def __getitem__(self, index: int) -> Tuple[Any, Any]:
         data = self.datalist[index]
-        leftRgb = Image.open(data["left_rgb"])
+        leftRgb = Image.open(data["leftRgb"])
         leftRgb = transforms.ToTensor()(leftRgb)
-        # rightRgb = Image.open(data["right_rgb"])
-        # rightRgb = transforms.ToTensor()(rightRgb)
-        velodyne = self.processVelodyneBinary(data["velodyne"])
-        timestamp = data["timestamp"]
-        calib = self.calib
+        calib = data["calib"]
 
         if self.transforms:
             leftRgb = self.transforms(leftRgb)
-            #leftRgb, rightRgb, velodyne = self.transforms(leftRgb, rightRgb, velodyne)
-        return leftRgb
-        #return { "left_rgb": leftRgb, "right_rgb": rightRgb} #, "velodyne": velodyne, "timestamp": timestamp, "calib": calib }
+        return leftRgb, calib
 
     def __len__(self) -> int:
         return len(self.datalist)
 
-    @staticmethod
-    def processVelodyneBinary(velodynePath: Path) -> Any:
-        return velodynePath
-
     def _parse_data(self) -> Tuple[List[Any], dict]:
-        sequence = "00"
-        sequence_path = self._extracted_raw / "dataset" / "sequences" / sequence
-        dataList, calib = self._process_sequence_path(sequence_path)
-        return dataList, calib
-
-    def _process_sequence_path(self, sequence_path: Path) -> Tuple[List[dict], dict]:
-        assert sequence_path.exists()
-        assert sequence_path.is_dir()
-
-        left_rgb_path = sequence_path / "image_2"
-        right_rgb_path = sequence_path / "image_3"
-        velodyne_path = sequence_path / "velodyne"
-        timestamp_path = sequence_path / "times.txt"
-        calib_path = sequence_path / "calib.txt"
-
-        assert left_rgb_path.exists()
-        assert right_rgb_path.exists()
-        assert velodyne_path.exists()
-        assert timestamp_path.exists()
-        assert calib_path.exists()
-
-        assert len(list(left_rgb_path.iterdir())) == len(list(right_rgb_path.iterdir()))
-        assert len(list(left_rgb_path.iterdir())) == len(list(velodyne_path.iterdir()))
-
-        left_rgb_list = sorted(list(left_rgb_path.iterdir()))
-        right_rgb_list = sorted(list(right_rgb_path.iterdir()))
-        velodyne_list = sorted(list(velodyne_path.iterdir()))
-
-        def timeStampGenerator():
-            with open(timestamp_path, "r") as f:
-                for line in f:
-                    yield line.strip()
-
-        dataList = []
-        for leftRgb, rightRgb, velodyne, timestamp in zip(left_rgb_list, right_rgb_list, velodyne_list, timeStampGenerator()):
-            dataList.append({
-                "left_rgb": leftRgb,
-                "right_rgb": rightRgb,
-                "velodyne": velodyne,
-                "timestamp": timestamp,
-            })
-
-        # read calib file as dict of key: List[float]
+        listImages = []
         calib = {}
-        with open(calib_path, "r") as f:
-            for line in f:
-                key, *values = line.strip().split(" ")
-                key = key[:-1] # remove ":" at the end
-                calib[key] = [float(value) for value in values]
-
-        return dataList, calib
+        for folder_file, _ in self.scenarios:
+            if folder_file.endswith("calib.zip"):
+                folder_prefix = '_'.join(folder_file.split('_')[:-1])
+                calibFile = self._extracted_raw / folder_prefix / "calib_cam_to_cam.txt"
+                calib['cam2cam'] = self._calib_to_dict(calibFile)
+                calibFile = self._extracted_raw / folder_prefix / "calib_velo_to_cam.txt"
+                calib['velo2cam'] = self._calib_to_dict(calibFile)
+                calibFile = self._extracted_raw / folder_prefix / "calib_imu_to_velo.txt"
+                calib['imu2velo'] = self._calib_to_dict(calibFile)
+                continue
+            folder_prefix = '_'.join(folder_file.split('_')[:-3])
+            folder = folder_file.split('.')[0]
+            folder = self._extracted_raw / folder_prefix / folder / "image_02" / "data"
+            for file in folder.iterdir():
+                listImages.append({"leftRgb":file})
+        return listImages, calib
 
     @property
     def _download_folder(self) -> Path:
@@ -179,11 +109,27 @@ class KittiDataset(VisionDataset):
     def _extracted_raw(self) -> Path:
         return self._extracted_folder / "raw"
 
-    def _getScenarios(self, scenariosFile) -> List[Tuple[str, str]]:
+    def _calib_to_dict(self, calibFile: Path) -> dict:
+        calib = {}
+        with open(calibFile, "r") as f:
+            for line in f:
+                key, *values = line.strip().split(" ")
+                key = key[:-1] # remove ":" at the end
+                if key == 'calib_time':
+                    continue
+                calib[key] = [float(value) for value in values]
+        return calib
+
+
+    def _getScenarios(self, scenariosFile, scenariosFilter) -> List[Tuple[str, str]]:
         if not scenariosFile.exists():
             assert False
         with open(scenariosFile, "r") as f:
             file, md5 = zip(*[line.strip().split(" ") for line in f])
+            if scenariosFilter is None or len(scenariosFilter) == 0:
+                return list(zip(file, md5))
+            filterFiles = [f for f in file if any([f.startswith(s) for s in scenariosFilter])]
+            file, md5 = zip(*[(f, m) for f, m in zip(file, md5) if f in filterFiles])
         return list(zip(file, md5))
 
     def _check_exists(self) -> bool:
@@ -197,26 +143,36 @@ class KittiDataset(VisionDataset):
             print(f"{self._extracted_raw} doesn't exist")
             return False
 
-        for file, _ in self.resources:
-            if not (self._extracted_depth / file).exists():
-                print(f"{self._extracted_depth / file} doesn't exist")
-                return False
+        if not (self._extracted_depth).exists():
+            print(f"{self._extracted_depth} doesn't exist")
+            return False
         for file, _ in self.scenarios:
-            if not (self._extracted_raw / file).exists():
-                print(f"{self._extracted_raw / file} doesn't exist")
-                return False
+            if file[-9:] != "calib.zip":
+                folder_prefix = '_'.join(file.split('_')[:-3])
+                folder = file.split('.')[0]
+                if not (self._extracted_raw / folder_prefix / folder).exists():
+                    print(f"{self._extracted_raw / folder_prefix / folder} doesn't exist")
+                    return False
+            else:
+                folder_prefix = '_'.join(file.split('_')[:-1])
+                expected_files = ['calib_cam_to_cam.txt', 'calib_imu_to_velo.txt', 'calib_velo_to_cam.txt']
+                for expected_file in expected_files:
+                    if not (self._extracted_raw / folder_prefix / expected_file).exists():
+                        print(f"{self._extracted_raw / folder_prefix / expected_file} doesn't exist")
+                        return False
 
         def expensiveCheck(dictFileMd5, folder):
+            download_folder = self._download_folder;
             for file, md5 in dictFileMd5:
-                if not check_integrity(str(folder / file), md5):
+                if not check_integrity(str(download_folder / file), md5):
                     print("{} doesn't have md5 {}".format(file, md5))
                     return False
             return True
 
         if self.shouldDownload:
-            return expensiveCheck(self.resources, self._extracted_depth) and expensiveCheck(self.scenarios, self._extracted_raw)
+            return expensiveCheck(self.resources.items(), self._extracted_depth) and expensiveCheck(self.scenarios, self._extracted_raw)
         if not self.disableExpensiveCheck:
-            return expensiveCheck(self.resources, self._extracted_depth) and expensiveCheck(self.scenarios, self._extracted_raw)
+            return expensiveCheck(self.resources.items(), self._extracted_depth) and expensiveCheck(self.scenarios, self._extracted_raw)
         return True
 
     def _generate_url(self, file) -> str:
@@ -238,7 +194,7 @@ class KittiDataset(VisionDataset):
             extract_folder = str(self._extracted_raw)
             print(f"Downloading {url} to {download_folder} and extracting to {extract_folder}")
             download_and_extract_archive(url, download_root=download_folder, extract_root=extract_folder, filename=file, md5=md5, remove_finished=self.remove_finished)
-        for file, md5 in self.resources:
+        for file, md5 in self.resources.items():
             url = self._generate_url(file)
             download_folder = str(self._download_folder)
             extract_folder = str(self._extracted_depth)
