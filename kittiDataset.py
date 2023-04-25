@@ -55,10 +55,14 @@ class KittiDataset(VisionDataset):
         if train:
             if validation:
                 self.filter_scenarios = ["2011_10_03"]
+                self.name = "validation"
             else:
                 self.filter_scenarios = ["2011_09_26", "2011_09_28"]
+                self.filter_scenarios = ["2011_10_03"]
+                self.name = "train"
         if not train:
             self.filter_scenarios = ["2011_09_29", "2011_09_30"]
+            self.name = "test"
         self.scenarios = self._getScenarios(self.scenariosFile, self.filter_scenarios)
 
         if download:
@@ -73,7 +77,7 @@ class KittiDataset(VisionDataset):
             poses = []
             for i in range(index, index + batch_size):
                 poses.append(self._absPose(i))
-            poses = {k: torch.stack([torch.tensor(d[k], dtype=torch.float64) for d in poses], dim=0) for k in poses[0].keys()}
+            poses = torch.Tensor(poses)
             yield poses
 
     def __getitem__(self, index: int) -> Tuple[Any, Any, Any]:
@@ -91,7 +95,7 @@ class KittiDataset(VisionDataset):
 
     def _parse_datas(self, scenarios) -> List[dict]:
         newDataList = []
-        with tqdm(total=len(scenarios), desc="reading files") as pbar:
+        with tqdm(total=len(scenarios), desc=f"reading files for {self.name}") as pbar:
             for folder_file, _ in scenarios:
                 datalist = self._parse_folder(folder_file)
                 datalistdict = []
@@ -176,10 +180,14 @@ class KittiDataset(VisionDataset):
         return {"absolutePose":currentPose, "relativePose": {"x":x, "y":y, "yaw":yaw}}
 
     def _absPose(self, index):
-        return self.datalist[index]["absPose"]
+        pose = self.datalist[index]["absPose"]
+        x, y, yaw = pose['x'], pose['y'], pose['yaw']
+        return torch.Tensor([x, y, yaw])
 
     def _relPose(self, index):
-        return self.datalist[index]["relPose"]
+        pose = self.datalist[index]["relPose"]
+        x, y, yaw = pose['x'], pose['y'], pose['yaw']
+        return torch.Tensor([x, y, yaw])
 
     def _rgbdPrev(self, index):
         return self._rgbdTensor(self.datalist[index]["leftRgbPrev"], self.datalist[index]["leftDepthPrev"])

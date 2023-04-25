@@ -16,7 +16,7 @@ class TransitionModel(nn.Module):
             CoordConv(channels*3, 32, kernel_size=3, stride=1, padding=1),
             nn.LayerNorm([32, height, width]),
             nn.ReLU(),
-        )   
+        )
         self.convs = nn.ModuleList([
             CoordConv(32, 8, kernel_size=5, stride=1, dilation=4, padding=8),
             CoordConv(32, 8, kernel_size=5, stride=1, dilation=2, padding=4),
@@ -48,20 +48,21 @@ class TransitionModel(nn.Module):
 
     def forward(self, observation, observationPrev):
         diffObservation = observation - observationPrev
+
         concatObservations = torch.cat((observation, observationPrev, diffObservation), dim=1)
 
         x = self.front(concatObservations)
-        x = torch.cat([conv(x) for conv in self.convs], dim=1)
+        x_conv = torch.cat([conv(x) for conv in self.convs], dim=1)
 
-        xi = self.body_first(x)
-        xi += self.body_second(xi)
-        xi += self.body_third(xi)
-        x = self.body_fourth(xi)
+        xi1 = self.body_first(x_conv)
+        xi2 = xi1 + self.body_second(xi1)
+        xi3 = xi2 + self.body_third(xi2)
+        x = self.body_fourth(xi3)
 
         x = x.view(x.size(0), -1)
-        
+
         return x
-    
+
 class GMModel(nn.Module):
     def __init__(self, num_features, k):
         super(GMModel, self).__init__()
@@ -76,7 +77,7 @@ class GMModel(nn.Module):
             nn.Linear(128, k),
             nn.Linear(128, k),
         ])
-    
+
     def forward(self, x):
         x = self.model(x)
         mu = self.dense_layer[0](x)
@@ -117,11 +118,11 @@ class MappingModel(nn.Module):
     def forward(self, observation):
         x = self.perspective_transform(observation)
         x = torch.cat([conv(x) for conv in self.convs], dim=1)
-        xi = self.body_first(x) 
+        xi = self.body_first(x)
         xi += self.body_second(xi)
         x = self.body_third(xi)
         return x
-    
+
     # TODO: Check if the wrap-perspective is working properly
     @staticmethod
     def perspective_transform(observation):
@@ -163,10 +164,10 @@ class MappingModel(nn.Module):
             warped_image = warped_image.reshape(80, 80, 1)
             warped_image = np.moveaxis(warped_image, -1, 0)
             all_images.append(warped_image.tolist())
-        
+
         return torch.tensor(all_images).to('cuda')
-            
-    
+
+
     @staticmethod
     def perspective_transform_dummy(x):
         bs, c, h, w = x.shape
@@ -211,7 +212,7 @@ class ObservationModel(nn.Module):
         x = x.view(x.size(0), -1)
         x = self.body_fifth(x)
         return x
-    
+
     @staticmethod
     def transform(map_stored, particle_present, particles_stored):
         pass
@@ -242,7 +243,7 @@ class SlamNet(nn.Module):
         self.is_pretrain_obs = is_pretrain_obs
 
         assert(len(inputShape) == 4)
-        #self.mapping = MappingModel(N_ch=16)
+        self.mapping = MappingModel(N_ch=16)
         self.visualTorso = TransitionModel(inputShape[1:])
         if inputShape[1] == 3:
             numFeatures = 2592
@@ -259,7 +260,7 @@ class SlamNet(nn.Module):
     def forward(self, observation, observationPrev):
         if self.is_training or self.is_pretrain_obs:
             map_t = self.mapping(observation)
-        
+
         if self.is_training or self.is_pretrain_trans:
             featureVisual = self.visualTorso(observation, observationPrev)
             x = self.gemHeads[0](featureVisual)
@@ -269,20 +270,16 @@ class SlamNet(nn.Module):
             if self.is_pretrain_trans:
                 # Using x, y, yaw to calculate the new state
                 new_states, new_weights = self.calculateNewState(x, y, yaw)
-                print(new_states.shape, new_weights.shape)
-        
+                #print(new_states.shape, new_weights.shape)
+
         #new_states, new_weights = self.resample(new_states, new_weights)
         #print(new_states.shape, new_weights.shape)
 
         # Calculate the resultant pose estimate
         pose_estimate = self.calc_average_trajectory(new_states, new_weights)
 
-        # Calculate the loss between the estimated pose and the ground truth pose
-        ground_truth = torch.randn([self.bs, 3], dtype=torch.float32)
-        loss = self.huber_loss(pose_estimate, ground_truth)
-
         # TODO: Can return loss instead -- whatever is required for backward pass
-        return {'x': x, 'y': y, 'yaw': yaw}
+        return pose_estimate
 
 
     # find the huber loss between the estimated pose and the ground truth pose
@@ -291,7 +288,7 @@ class SlamNet(nn.Module):
     def huber_loss(pose_estimated, actual_pose, delta = 0.1):
         residual = torch.abs(pose_estimated - actual_pose)
         is_small_res = residual < delta
-        return torch.where(is_small_res, 0.5 * residual ** 2, delta * (residual - 0.5 * delta))        
+        return torch.where(is_small_res, 0.5 * residual ** 2, delta * (residual - 0.5 * delta))
 
     # Resample the particles based on the weights
     # NOTE: Paper does not mention if the resampling is hard or soft and hence we use soft to avaoid zero gradient
@@ -340,34 +337,43 @@ class SlamNet(nn.Module):
         mean = torch.stack([x['mu'], y['mu'], yaw['mu']])
 
         # Make sigma a diagonal matrix with batch size as the first dimension
-        x['cov_diag'] = torch.diag_embed(x['sigma']**2)  
+        x['cov_diag'] = torch.diag_embed(x['sigma']**2)
         x['covariance'] = torch.bmm(x['cov_diag'], x['cov_diag'].transpose(1, 2))
         y['cov_diag'] = torch.diag_embed(y['sigma']**2)
         y['covariance'] = torch.bmm(y['cov_diag'], y['cov_diag'].transpose(1, 2))
         yaw['cov_diag'] = torch.diag_embed(yaw['sigma']**2)
         yaw['covariance'] = torch.bmm(yaw['cov_diag'], yaw['cov_diag'].transpose(1, 2))
 
+        # Normalize logvar
+        x['logvar'] = x['logvar'] - torch.logsumexp(x['logvar'], dim=-1, keepdim=True)
+        y['logvar'] = y['logvar'] - torch.logsumexp(y['logvar'], dim=-1, keepdim=True)
+        yaw['logvar'] = yaw['logvar'] - torch.logsumexp(yaw['logvar'], dim=-1, keepdim=True)
+        
+                
         covariance = torch.stack([x['covariance'], y['covariance'], yaw['covariance']])
         prob_stack = torch.stack([x['logvar'], y['logvar'], yaw['logvar']])
-        prob_stack = torch.exp(prob_stack)
+        print(prob_stack)
+        #prob_stack = torch.exp(prob_stack)
+        #print(prob_stack)
 
         new_states = torch.zeros(self.bs, self.K, 3)
         new_weights = torch.zeros(self.bs, self.K)
 
-        for i in range(3):                                            
+        for i in range(3):
             for j in range(self.bs):
                 component_samples = torch.multinomial(prob_stack[i][j], self.K, replacement=True)
                 for k, component in enumerate(component_samples):
                     mean_component = mean[i][j]
                     covariance_component = covariance[i][j]
-                    mvn = MultivariateNormal(mean_component, covariance_component) 
+                    mvn = MultivariateNormal(mean_component, covariance_component)
                     chosen_sample = mvn.sample()
+                    print(chosen_sample)
                     new_states[j][k][i] = self.states[j][k][i] + chosen_sample[component]
                     new_weights[j][k] = self.weights[j][k] * mvn.log_prob(chosen_sample)
         self.states = new_states
-        self.weights = new_weights      
+        self.weights = new_weights
         return new_states, new_weights
-    
+
 
     def calc_average_trajectory(self, new_states, new_weights):
         # Calculate the average trajectory
