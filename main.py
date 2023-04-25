@@ -79,7 +79,7 @@ def train(arg, slamNet, device):
     train_data = KittiDataset(arg.dataset_path, type=train_type, download=arg.download_dataset, disableExpensiveCheck=True)
     dataLoader = DataLoader(train_data, batch_size=arg.batch_size, shuffle=False, num_workers=arg.num_workers, pin_memory=True)
 
-    validation_data = KittiDataset(arg.dataset_path, type=KittiDatasetType.eValidation, download=arg.download_dataset, disableExpensiveCheck=True,validation=True)
+    validation_data = KittiDataset(arg.dataset_path, type=KittiDatasetType.eValidation, download=arg.download_dataset, disableExpensiveCheck=True)
     validation_dataLoader = DataLoader(validation_data, batch_size=arg.batch_size, shuffle=False, num_workers=arg.num_workers, pin_memory=True)
 
     print(f"Number of training data: {len(train_data)}")
@@ -138,7 +138,7 @@ def train(arg, slamNet, device):
     torch.save(slamNet.state_dict(), arg.save_model)
 
 def test(arg, model, model_file, device):
-    testData = KittiDataset(arg.dataset_path, test=KittiDatasetType.eTest, download=arg.download_dataset, train=False, disableExpensiveCheck=True)
+    testData = KittiDataset(arg.dataset_path, test=KittiDatasetType.eTest, download=arg.download_dataset, disableExpensiveCheck=True)
     dataLoader = DataLoader(testData, batch_size=arg.batch_size, shuffle=False, num_workers=arg.num_workers, pin_memory=True)
 
     model.load_state_dict(torch.load(model_file))

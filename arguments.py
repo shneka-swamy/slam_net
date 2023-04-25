@@ -28,8 +28,8 @@ def commandParser():
     maxSaveNumber = -1
     for files in Path('model').glob('slamNet_v*.pth'):
         maxSaveNumber = max(maxSaveNumber, int(files.stem[-4:]))
-    idxSavedFiles = maxSaveNumber + 1
-    parser.add_argument('--save-model', default=f'model/slamNet_v{idxSavedFiles:04d}.pth', type=str, help='Path to save the model')
+    saveFileIndex = maxSaveNumber + 1
+    parser.add_argument('--save-model', default=f'model/slamNet_v{saveFileIndex:04d}.pth', type=str, help='Path to save the model')
     parser.add_argument('--load-model', default=f'model/slamNet_v{maxSaveNumber:04d}.pth', type=Path, help='Path to load the model')
 
     return parser.parse_args()
