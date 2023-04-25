@@ -154,8 +154,13 @@ class KittiDataset(VisionDataset):
 
     def _rgbdTensor(self, rgbFile, depthFile):
         leftRgb = Image.open(rgbFile)
-        leftRgb = transforms.ToTensor()(leftRgb)
         leftDepth = Image.open(depthFile)
+
+        # convert the image from 3, h, w to 3, 90, 160
+        leftRgb = leftRgb.resize((160, 90))
+        leftDepth = leftDepth.resize((160, 90))
+
+        leftRgb = transforms.ToTensor()(leftRgb)
         leftDepth = transforms.ToTensor()(leftDepth)
         # combine rgb and depth
         return torch.cat((leftRgb, leftDepth), dim=0)

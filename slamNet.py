@@ -235,7 +235,7 @@ class SlamNet(nn.Module):
         if inputShape[0] == 3:
             numFeatures = 2592
         else:
-            numFeatures = 0
+            numFeatures = 2592
         self.gemHeads = nn.ModuleList([
             GMModel(numFeatures, 3),
             GMModel(numFeatures, 3),
