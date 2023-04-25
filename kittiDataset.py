@@ -15,9 +15,7 @@ class KittiDataset(VisionDataset):
     data_url = "https://s3.eu-central-1.amazonaws.com/avg-kitti/"
     data_raw_url = data_url + "raw_data/"
 
-    # 2011_09_26_drive_0009/2011_09_26_drive_0009_sync.zip
-
-    scenarios = [
+    filer_scenarios = [
         "2011_09_26_drive_0001",
         "2011_09_26_drive_0002",
         "2011_09_26_drive_0005",
@@ -49,28 +47,9 @@ class KittiDataset(VisionDataset):
     ]
 
     resources = {
-        "depth_annotations": "data_depth_annotated.zip",
-        "depth_raw": "data_depth_velodyne.zip",
+            "data_depth_annotated.zip": "7d1ce32633dc2f43d9d1656a1f875e47",
+            "data_depth_velodyne.zip": "20bd6e7dc741520240a0c471392fe9df",
     }
-    md5 = {
-        "depth_annotations": "7d1ce32633dc2f43d9d1656a1f875e47",
-        "depth_raw": "20bd6e7dc741520240a0c471392fe9df",
-    }
-    extracted_folders = [
-        Path("dataset") / "poses",
-        Path("dataset") / "sequences",
-    ]
-    extracted_subfolders = [ # check inside each folder inside train/* and test/*
-        Path("proj_depth") / "groundtruth" / "image_02",
-        Path("proj_depth") / "groundtruth" / "image_03",
-        Path("proj_depth") / "velodyne_raw" / "image_02",
-        Path("proj_depth") / "velodyne_raw" / "image_03",
-    ]
-    extracted_sequences_data = [
-        Path("velodyne"),
-        Path("calib.txt"),
-        Path("times.txt"),
-    ]
 
     def __init__(self, root:str, train:bool = True,
                  transform: Optional[Callable] = None,
@@ -81,7 +60,7 @@ class KittiDataset(VisionDataset):
                  disableExpensiveCheck: bool = False):
         super().__init__(root, transforms, transform, target_transform)
         self.train = train
-        self.root = Path(root) / "kitti_dataset"
+        self.root = Path(Path(root) / "kitti_dataset")
         self._location = "training" if train else "testing"
         self.remove_finished = remove_finished
         self.disableExpensiveCheck = disableExpensiveCheck
@@ -90,16 +69,22 @@ class KittiDataset(VisionDataset):
         self.transform = transform
         self.target_transform = target_transform
 
-        if not self._raw_folder.exists():
-            self._raw_folder.mkdir(parents=True)
+        if not self._download_folder.exists():
+            self._download_folder.mkdir(parents=True)
         if not self._extracted_folder.exists():
             self._extracted_folder.mkdir(parents=True)
+
+        self.scenariosFile = Path(self.root) / "kittiMd5.txt"
+        self.scenarios = []
+        for scenarios, md5 in self._getScenarios(self.scenariosFile):
+            if any(filter in scenarios for filter in self.filer_scenarios):
+                self.scenarios.append((scenarios, md5))
 
         if download:
             self.download()
         if not self._check_exists():
             raise RuntimeError("Dataset not found. You can use download=True to download it")
-        
+
         self.datalist, self.calib = self._parse_data()
 
     def __getitem__(self, index: int) -> Tuple[Any, Any, Any, Any, Any]: # LeftRGB, RightRGB, Velodyne, Timestamp, CalibDict
@@ -120,7 +105,7 @@ class KittiDataset(VisionDataset):
 
     def __len__(self) -> int:
         return len(self.datalist)
-    
+
     @staticmethod
     def processVelodyneBinary(velodynePath: Path) -> Any:
         return velodynePath
@@ -130,17 +115,17 @@ class KittiDataset(VisionDataset):
         sequence_path = self._extracted_raw / "dataset" / "sequences" / sequence
         dataList, calib = self._process_sequence_path(sequence_path)
         return dataList, calib
-        
+
     def _process_sequence_path(self, sequence_path: Path) -> Tuple[List[dict], dict]:
         assert sequence_path.exists()
         assert sequence_path.is_dir()
-        
+
         left_rgb_path = sequence_path / "image_2"
         right_rgb_path = sequence_path / "image_3"
         velodyne_path = sequence_path / "velodyne"
         timestamp_path = sequence_path / "times.txt"
         calib_path = sequence_path / "calib.txt"
-        
+
         assert left_rgb_path.exists()
         assert right_rgb_path.exists()
         assert velodyne_path.exists()
@@ -178,103 +163,84 @@ class KittiDataset(VisionDataset):
 
         return dataList, calib
 
+    @property
+    def _download_folder(self) -> Path:
+        return self.root / "downloaded"
 
     @property
-    def _raw_folder(self) -> str:
-        return self.root / "downloaded"
-    
-    @property
-    def _extracted_folder(self) -> str:
+    def _extracted_folder(self) -> Path:
         return self.root / "extracted"
-    
+
     @property
-    def _extracted_depth(self) -> str:
+    def _extracted_depth(self) -> Path:
         return self._extracted_folder / "depth"
 
     @property
-    def _extracted_raw(self) -> str:
+    def _extracted_raw(self) -> Path:
         return self._extracted_folder / "raw"
 
+    def _getScenarios(self, scenariosFile) -> List[Tuple[str, str]]:
+        if not scenariosFile.exists():
+            assert False
+        with open(scenariosFile, "r") as f:
+            file, md5 = zip(*[line.strip().split(" ") for line in f])
+        return list(zip(file, md5))
+
     def _check_exists(self) -> bool:
-
-        return False
-    
-        for folders in self.extracted_folders:
-            if not (self._extracted_raw / folders).exists():
-                print("{} not found".format(self._extracted_raw / folders))
-                return False
-        for key, md5 in self.md5.items():
-            file = self.resources[key]
-            if not (self._raw_folder / file).exists():
-                print("{} not found".format(file))
-                return False
-
-        for folders in self.extracted_subfolders:
-            folder = self._extracted_depth / "train"
-            if not folder.exists():
-                print("{} not found".format(folder))
-                return False
-            for subfolders in folder.iterdir():
-                if not (subfolders / folders).exists():
-                    print("{} not found".format(subfolders / folders))
-                    return False
-            folder = self._extracted_depth / "val"
-            if not folder.exists():
-                print("{} not found".format(folder))
-                return False
-            for subfolders in folder.iterdir():
-                if not (subfolders / folders).exists():
-                    print("{} not found".format(subfolders / folders))
-                    return False
-
-        
-        for folders in self.extracted_folders:
-            folder = self._extracted_raw
-            if not folder.exists():
-                print("{} not found".format(folder))
-                return False
-            if not (folder / folders).exists():
-                print("{} not found".format(folder / folders))
-                return False
-        
-        folder = self._extracted_raw / "dataset" / "sequences"
-        if not folder.exists():
-            print("{} not found".format(folder))
+        if not self._extracted_folder.exists():
+            print(f"{self._extracted_folder} doesn't exist")
             return False
-        for file_folder in self.extracted_sequences_data:
-            for subfolder in folder.iterdir():
-                if not (subfolder / file_folder).exists():
-                    print("{} not found".format(subfolder / file_folder))
-                    return False
+        if not self._extracted_depth.exists():
+            print(f"{self._extracted_depth} doesn't exist")
+            return False
+        if not self._extracted_raw.exists():
+            print(f"{self._extracted_raw} doesn't exist")
+            return False
 
-        def expensiveCheck():
-            for key, md5 in self.md5.items():
-                file = self.resources[key]
-                if not check_integrity(self._raw_folder / file, md5):
+        for file, _ in self.resources:
+            if not (self._extracted_depth / file).exists():
+                print(f"{self._extracted_depth / file} doesn't exist")
+                return False
+        for file, _ in self.scenarios:
+            if not (self._extracted_raw / file).exists():
+                print(f"{self._extracted_raw / file} doesn't exist")
+                return False
+
+        def expensiveCheck(dictFileMd5, folder):
+            for file, md5 in dictFileMd5:
+                if not check_integrity(str(folder / file), md5):
                     print("{} doesn't have md5 {}".format(file, md5))
                     return False
             return True
 
         if self.shouldDownload:
-            return expensiveCheck()
+            return expensiveCheck(self.resources, self._extracted_depth) and expensiveCheck(self.scenarios, self._extracted_raw)
         if not self.disableExpensiveCheck:
-            return expensiveCheck()
+            return expensiveCheck(self.resources, self._extracted_depth) and expensiveCheck(self.scenarios, self._extracted_raw)
         return True
-        
+
+    def _generate_url(self, file) -> str:
+        raw_suffix = ["_calib.zip", "_sync.zip", "_tracklets.zip", "_extract.zip"]
+        if any(suffix in file for suffix in raw_suffix):
+            if file.endswith("_calib.zip"):
+                return f"{self.data_raw_url}{file}"
+            prefixFile = "_".join(file.split("_")[:-1])
+            return f"{self.data_raw_url}{prefixFile}/{file}"
+        return f"{self.data_url}{file}"
 
     def download(self) -> None:
         if self._check_exists():
            print("Files already downloaded and verified")
            return
-        for filePrefix in self.scenarios:
-            url = self.data_raw_url + file / f"{file}.zip"
-            file = f"{file}.zip"
-            download_and_extract_archive(url, download_root=self._raw_folder, extract_root=self._extracted_raw, filename=file, md5=None, remove_finished=self.remove_finished)
-        return
-        for key, md5 in self.md5.items():
-            file = self.resources[key]
-            if key == "depth_annotations" or key == "depth_raw":
-                extracted_folder = self._extracted_depth
-            else:
-                extracted_folder = self._extracted_raw
-            download_and_extract_archive(self.data_url + file, download_root=self._raw_folder, extract_root=extracted_folder, filename=file, md5=md5, remove_finished=self.remove_finished)
+        for file, md5 in self.scenarios:
+            url = self._generate_url(file)
+            download_folder = str(self._download_folder)
+            extract_folder = str(self._extracted_raw)
+            print(f"Downloading {url} to {download_folder} and extracting to {extract_folder}")
+            download_and_extract_archive(url, download_root=download_folder, extract_root=extract_folder, filename=file, md5=md5, remove_finished=self.remove_finished)
+        for file, md5 in self.resources:
+            url = self._generate_url(file)
+            download_folder = str(self._download_folder)
+            extract_folder = str(self._extracted_depth)
+            download_and_extract_archive(url, download_root=download_folder, extract_root=extract_folder, filename=file, md5=md5, remove_finished=self.remove_finished)
+
