@@ -112,6 +112,8 @@ def train(arg, slamNet):
                         batchBar.desc = f"Epoch {epoch} / {arg.epochs}, loss: {runningLoss / 2000}"
                         runningLoss = 0.0
 
+            print("Finished epoch")
+
             epochBar.desc = f"Epoch {epoch} / {arg.epochs}, average training loss: {epochLoss / len(dataLoader)}"
 
             validationLosses[validationLossIdx] = validation(slamNet, validation_dataLoader, criterion)
