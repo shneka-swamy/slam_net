@@ -59,6 +59,7 @@ class KittiDataset(VisionDataset):
         self.scenariosFile = Path(self.root) / "kittiMd5.txt"
         if type == KittiDatasetType.eTrain:
             self.filter_scenarios = ["2011_09_26", "2011_09_28"]
+            self.filter_scenarios = ["2011_10_03"]
             self.name = "train"
         elif type == KittiDatasetType.eDummyTrain:
             self.filter_scenarios = ["2011_10_03"]

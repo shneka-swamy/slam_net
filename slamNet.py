@@ -126,10 +126,14 @@ class MappingModel(nn.Module):
         # Perspective transform is done using torch to aid in backpropagation
         # The perspective transform is done on the CPU
 
+        print("The shape of the observation is: ", observation.shape)
+    
         # convert rgb to grayscale
+        # Using matplotlib formula
         observation = observation[:, 0, :, :] * 0.2989 + observation[:, 1, :, :] * 0.5870 + observation[:, 2, :, :] * 0.1140
         observation = observation.unsqueeze(1)
-    
+
+        print("The shape of observation after conversion is:", observation.shape)
         fx, fy = 7.188560000000e+02, 7.188560000000e+02
         cx, cy = 6.071928000000e+02, 1.852157000000e+02
 
@@ -145,17 +149,17 @@ class MappingModel(nn.Module):
         # The extrinsic matrix
         RT = torch.cat((R, T.view(3, 1)), dim=1)
 
+        print("The shape of the RT matrix is: ", RT.shape)
+
         # The full projection matrix
         P = torch.matmul(K, RT)
 
-        # The inverse of the projection matrix
-        Pinv = torch.inverse(P)
-
         # Perspective transform
-        perspective_transform = torch.nn.functional.affine_grid(Pinv.unsqueeze(0), observation.unsqueeze(0).size())
+        perspective_transform = torch.nn.functional.affine_grid(P.unsqueeze(0), observation.unsqueeze(0).size())
+        transformed_image = torch.nn.functional.grid_sample(observation.unsqueeze(0), perspective_transform)
 
         # Change to the required shape
-        perspective_transform = perspective_transform.permute(0, 3, 1, 2)
+        #perspective_transform = perspective_transform.permute(0, 3, 1, 2)
         print(perspective_transform.shape)
 
         return perspective_transform
@@ -249,6 +253,11 @@ class SlamNet(nn.Module):
 
     def forward(self, observation, observationPrev):
         if self.is_training or self.is_pretrain_obs:
+            # Split the observation as rgb or depth data
+            rgb_image = observation[:, :3, :, :]
+            depth_image = observation[:, 3, :, :]
+            print('The shape of rgb_image is: ', rgb_image.shape)
+            print('The shape of the depth image is:', depth_image.shape)
             map_t = self.mapping(observation)
 
         if self.is_training or self.is_pretrain_trans:
