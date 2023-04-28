@@ -122,7 +122,7 @@ class MappingModel(nn.Module):
 
     # Perspective shape is (1, 80, 80)
     @staticmethod
-    def try_perspective_transform(self, observation):
+    def try_perspective_transform(observation):
         # Perspective transform is done using torch to aid in backpropagation
         # The perspective transform is done on the CPU
 
